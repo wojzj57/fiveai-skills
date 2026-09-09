@@ -1,9 +1,15 @@
 import { z } from "zod";
 import { DurationMsSchema, EpochSchema, IsoUtcSchema, PlayerIdSchema, UuidSchema } from "./ids.ts";
-import { StructuredErrorSchema } from "./errors.ts";
-import { ExecutionValueSchema } from "./wire-value.ts";
+import { StructuredErrorSchema, isUnknownOutcomeCode } from "./errors.ts";
+import { BoundedExecutionValueSchema } from "./wire-value.ts";
 import { LIMITS } from "./limits.ts";
 import { ControlToolSchema, FifoToolSchema } from "./tool-names.ts";
+import {
+  ARGS_JSON_BOUNDS,
+  CONTROL_RESULT_JSON_BOUNDS,
+  boundedJson,
+} from "./json-bounds.ts";
+import { ResourceInputSchema, ResourceNameSchema } from "../tools/schemas.ts";
 
 /**
  * v1 internal message payload contracts (RFC §5.1 message table). The
@@ -12,6 +18,9 @@ import { ControlToolSchema, FifoToolSchema } from "./tool-names.ts";
  * messages belongs to later implementation steps — this module only fixes
  * the wire contract.
  */
+
+/** Bounded JSON field for submitted tool arguments (review F5 input policy). */
+const BoundedArgumentsSchema = boundedJson(ARGS_JSON_BOUNDS);
 
 /** Task lifecycle states (design §6.1). */
 export const TASK_STATES = [
@@ -40,7 +49,22 @@ export const TargetRefSchema = z.discriminatedUnion("side", [
 ]);
 export type TargetRef = z.infer<typeof TargetRefSchema>;
 
-/** hello / welcome — connection handshake (RFC §5.1, §4.3). */
+/**
+ * Execution environment identity reported by a Server bridge connection
+ * (RFC §5.2, review F2): the bridge's own generation plus the FXServer
+ * process identity it runs in. bridgeEpoch is NOT the server lifecycle —
+ * pid + startedAt are. When serverIdentityVerifiable is false the identity
+ * cannot anchor the RFC §7.4 environment-recovery exception.
+ */
+export const BridgeEnvironmentSchema = z.strictObject({
+  bridgeEpoch: EpochSchema,
+  serverPid: z.number().int().positive(),
+  serverStartedAt: IsoUtcSchema,
+  serverIdentityVerifiable: z.boolean(),
+});
+export type BridgeEnvironment = z.infer<typeof BridgeEnvironmentSchema>;
+
+/** hello / welcome — connection handshake (RFC §5.1, §4.3, §5.2). */
 export const HelloSchema = z.discriminatedUnion("role", [
   z.strictObject({
     role: z.literal("entry"),
@@ -53,6 +77,7 @@ export const HelloSchema = z.discriminatedUnion("role", [
     internalProtocol: z.literal(1),
     buildId: z.string().min(1),
     adapterDigest: z.string().min(1),
+    environment: BridgeEnvironmentSchema,
   }),
 ]);
 export type Hello = z.infer<typeof HelloSchema>;
@@ -79,16 +104,16 @@ export const TaskSubmitSchema = z
     /** Only FIFO-routed tools enter task.submit; read/control tools use control.request. */
     tool: FifoToolSchema,
     /** Already-validated tool arguments (validated against the tool schema). */
-    arguments: z.json(),
+    arguments: BoundedArgumentsSchema,
     requestId: UuidSchema,
   })
   .superRefine((submit, ctx) => {
-    if (submit.tool === "resource" && isResourceReadArguments(submit.arguments)) {
+    if (submit.tool === "resource" && looksLikeResourceReadArguments(submit.arguments)) {
       ctx.addIssue({
         code: "custom",
         path: ["tool"],
         message:
-          "resource list/status reads never enter the FIFO (RFC §11); their entry-side routing is defined by the resource-control slice",
+          "resource list/status reads never enter the FIFO (RFC §11); they ride the control channel and bridge.read.request",
       });
     }
   });
@@ -107,13 +132,13 @@ export const TaskDispatchSchema = z
     target: TargetRefSchema,
     /** Only FIFO-routed tools are dispatched to executors. */
     tool: FifoToolSchema,
-    arguments: z.json(),
+    arguments: BoundedArgumentsSchema,
     /** Absolute deadline for timeoutMs observation, monotonic clock ms. */
     deadlineMs: z.number().int().positive(),
     timeoutMs: z.number().int().min(1),
   })
   .superRefine((dispatch, ctx) => {
-    if (dispatch.tool === "resource" && isResourceReadArguments(dispatch.arguments)) {
+    if (dispatch.tool === "resource" && looksLikeResourceReadArguments(dispatch.arguments)) {
       ctx.addIssue({
         code: "custom",
         path: ["tool"],
@@ -122,11 +147,27 @@ export const TaskDispatchSchema = z
     }
   });
 
-/** True for `{tool:"resource", action:"list"|"status"}` argument shapes. */
-function isResourceReadArguments(args: unknown): boolean {
+/**
+ * True for argument SHAPES that look like resource reads — used to keep any
+ * read-shaped payload out of the FIFO, even an otherwise invalid one. The
+ * strict validator for the control channel is {@link isResourceReadArguments}.
+ */
+function looksLikeResourceReadArguments(args: unknown): boolean {
   if (typeof args !== "object" || args === null) return false;
   const action = (args as { action?: unknown }).action;
   return action === "list" || action === "status";
+}
+
+/**
+ * True for arguments that fully validate as resource list/status reads
+ * (RFC §11, review F4): the shape both control channels accept.
+ */
+export function isResourceReadArguments(args: unknown): boolean {
+  const parsed = ResourceInputSchema.safeParse(args);
+  return (
+    parsed.success &&
+    (parsed.data.action === "list" || parsed.data.action === "status")
+  );
 }
 
 export const TaskReceivedSchema = z.strictObject({
@@ -134,36 +175,93 @@ export const TaskReceivedSchema = z.strictObject({
 });
 
 /**
+ * Completion evidence carried by failed results (RFC §6.3, §8, review F3).
+ * Serialization failures report executionCompleted=true — the remote
+ * function ended, the queue may advance. Compile failures report
+ * executionCompleted=false with noRemoteExecution=true — the code never ran
+ * remotely, so ending the task is safe.
+ */
+export const FailureEvidenceSchema = z.strictObject({
+  /** Whether the reporting side can definitively state the function ended. */
+  executionCompleted: z.boolean(),
+  /** True when the fragment never started executing on a remote runtime. */
+  noRemoteExecution: z.boolean(),
+});
+export type FailureEvidence = z.infer<typeof FailureEvidenceSchema>;
+
+/**
  * task.result — bridge → broker → entry (RFC §5.1, §6.3). Only terminal
  * outcomes are reported; `unknown` is a broker-observed state and never a
- * bridge report. succeeded carries a result, failed carries an error.
+ * bridge report — failed results therefore reject the unknown-outcome error
+ * codes (review F3). succeeded carries a result, failed carries an error
+ * plus completion evidence.
  *
- * Late terminal reports across a broker restart must carry
- * originalBrokerInstanceId plus the original target identity so the broker
- * can match them against the recovery record (RFC §5.1: 重连回报旧任务).
- * The field is optional at the schema level because same-generation reports
- * identify through the envelope; the runtime requires it for reconnect
- * reports.
+ * The report identifies its execution environment (`executedBy`) so the
+ * broker can match late reports against the persisted dispatch intent
+ * across restarts (review F2). Late reports across a broker restart carry
+ * originalBrokerInstanceId as well; the field is optional at the schema
+ * level because same-generation reports identify through the envelope.
  */
 export const TaskResultSchema = z.discriminatedUnion("state", [
   z.strictObject({
     taskId: UuidSchema,
     target: TargetRefSchema,
+    executedBy: BridgeEnvironmentSchema,
     state: z.literal("succeeded"),
-    result: ExecutionValueSchema,
+    result: BoundedExecutionValueSchema,
     queuedMs: DurationMsSchema,
     executionMs: DurationMsSchema,
     originalBrokerInstanceId: UuidSchema.optional(),
   }),
-  z.strictObject({
-    taskId: UuidSchema,
-    target: TargetRefSchema,
-    state: z.literal("failed"),
-    error: StructuredErrorSchema,
-    queuedMs: DurationMsSchema,
-    executionMs: DurationMsSchema,
-    originalBrokerInstanceId: UuidSchema.optional(),
-  }),
+  z
+    .strictObject({
+      taskId: UuidSchema,
+      target: TargetRefSchema,
+      executedBy: BridgeEnvironmentSchema,
+      state: z.literal("failed"),
+      error: StructuredErrorSchema,
+      evidence: FailureEvidenceSchema,
+      queuedMs: DurationMsSchema,
+      executionMs: DurationMsSchema,
+      originalBrokerInstanceId: UuidSchema.optional(),
+    })
+    .superRefine((failure, ctx) => {
+      const { error, evidence } = failure;
+      if (isUnknownOutcomeCode(error.code)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["error"],
+          message: `${error.code} is a broker-observed unknown state, never a bridge-reported terminal result (RFC §6.2)`,
+        });
+        return;
+      }
+      if (error.code === "COMPILATION_ERROR") {
+        if (
+          evidence.executionCompleted !== false ||
+          evidence.noRemoteExecution !== true
+        ) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["evidence"],
+            message:
+              "COMPILATION_ERROR must report executionCompleted=false and noRemoteExecution=true (RFC §8)",
+          });
+        }
+        return;
+      }
+      if (
+        error.code === "RESULT_UNSERIALIZABLE" ||
+        error.code === "RESULT_TOO_LARGE"
+      ) {
+        if (evidence.executionCompleted !== true) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["evidence"],
+            message: `${error.code} means the remote function already ended: executionCompleted=true (RFC §6.3)`,
+          });
+        }
+      }
+    }),
 ]);
 export type TaskResult = z.infer<typeof TaskResultSchema>;
 
@@ -172,35 +270,108 @@ export const TaskResultAckSchema = z.strictObject({
   taskId: UuidSchema,
 });
 
-/**
- * task.status / task.statusResult — query an existing task without code and
- * without retrying (RFC §5.1, §7.3).
- */
 export const TaskStatusQuerySchema = z.strictObject({
   taskId: UuidSchema,
 });
 
+/**
+ * task.status / task.statusResult — query an existing task without code and
+ * without retrying (RFC §5.1, §7.3). The payload combinations are
+ * discriminated by state (review F3):
+ * - succeeded: resultAvailable must equal the presence of `result`; error
+ *   and evidence are never carried;
+ * - failed: resultAvailable must equal the presence of `error`, and
+ *   evidence accompanies the error; unknown-outcome codes never appear
+ *   (they cannot be verified terminals);
+ * - unknown: resultAvailable is false; an optional error must be one of the
+ *   broker-observation codes (TIMEOUT_UNKNOWN / CONNECTION_LOST_UNKNOWN);
+ * - queued / running / cancelled: resultAvailable is false and no terminal
+ *   payload is carried.
+ */
 export const TaskStatusResultSchema = z
   .strictObject({
     taskId: UuidSchema,
     state: TaskStateSchema,
-    /** False when only a summary remains after result retention expired. */
+    /** True only while the full terminal payload is retained. */
     resultAvailable: z.boolean(),
-    result: ExecutionValueSchema.optional(),
+    result: BoundedExecutionValueSchema.optional(),
     error: StructuredErrorSchema.optional(),
+    evidence: FailureEvidenceSchema.optional(),
     queuedMs: DurationMsSchema.optional(),
     executionMs: DurationMsSchema.optional(),
   })
   .superRefine((status, ctx) => {
-    if (!status.resultAvailable) return;
+    const add = (path: string, message: string) =>
+      ctx.addIssue({ code: "custom", path: [path], message });
     const hasResult = status.result !== undefined;
     const hasError = status.error !== undefined;
-    if (hasResult === hasError) {
-      ctx.addIssue({
-        code: "custom",
-        message:
-          "resultAvailable=true requires exactly one of result or error",
-      });
+    const hasEvidence = status.evidence !== undefined;
+    switch (status.state) {
+      case "succeeded":
+        if (hasError || hasEvidence) {
+          add("error", "succeeded carries no error or evidence");
+        }
+        if (status.resultAvailable !== hasResult) {
+          add(
+            "resultAvailable",
+            "succeeded: resultAvailable must equal the presence of result",
+          );
+        }
+        break;
+      case "failed":
+        if (hasResult) {
+          add("result", "failed carries no result value");
+        }
+        if (status.resultAvailable !== hasError) {
+          add(
+            "resultAvailable",
+            "failed: resultAvailable must equal the presence of error",
+          );
+        }
+        if (hasError !== hasEvidence) {
+          add(
+            "evidence",
+            "failed: error and evidence appear together",
+          );
+        }
+        if (
+          hasError &&
+          status.error !== undefined &&
+          isUnknownOutcomeCode(status.error.code)
+        ) {
+          add(
+            "error",
+            "unknown-outcome codes never mark a verified failed terminal",
+          );
+        }
+        break;
+      case "unknown":
+        if (status.resultAvailable) {
+          add("resultAvailable", "unknown never retains a full payload");
+        }
+        if (hasResult || hasEvidence) {
+          add("result", "unknown carries no result or evidence");
+        }
+        if (
+          hasError &&
+          status.error !== undefined &&
+          !isUnknownOutcomeCode(status.error.code)
+        ) {
+          add(
+            "error",
+            "unknown observation errors are TIMEOUT_UNKNOWN / CONNECTION_LOST_UNKNOWN",
+          );
+        }
+        break;
+      default:
+        // queued, running, cancelled
+        if (status.resultAvailable) {
+          add("resultAvailable", "non-terminal states never retain payloads");
+        }
+        if (hasResult || hasError || hasEvidence) {
+          add("result", "non-terminal states carry no terminal payloads");
+        }
+        break;
     }
   });
 
@@ -215,7 +386,7 @@ export const ApprovalRequestSchema = z.strictObject({
   digest: z.string().min(1),
   method: z.string().min(1),
   sql: z.string().min(1),
-  parameters: z.json(),
+  parameters: BoundedArgumentsSchema,
   serverEpoch: EpochSchema,
   bridgeEpoch: EpochSchema,
   entrySessionId: UuidSchema,
@@ -286,20 +457,109 @@ export const ClientsSnapshotSchema = z.strictObject({
 
 /**
  * control.request / control.result — entry ↔ broker channel for status,
- * queue, logs, and reference tools (RFC §5.1). Independent of the FIFO:
- * these requests keep working while the execution queue is paused.
+ * queue, logs, reference, and resource reads (RFC §5.1, §11, review F4).
+ * Independent of the FIFO: these requests keep working while the execution
+ * queue is paused. The `resource` tool is restricted to list/status
+ * arguments here; start/stop/restart mutations enter the FIFO via
+ * task.submit and are dispatched to the bridge like other executions.
  */
-export const ControlRequestSchema = z.strictObject({
-  requestId: UuidSchema,
-  /** Only broker-local control/read tools ride this channel (RFC §5.1). */
-  tool: ControlToolSchema,
-  arguments: z.json(),
-});
+export const ControlRequestSchema = z
+  .strictObject({
+    requestId: UuidSchema,
+    /** Only control/read tools ride this channel (RFC §5.1). */
+    tool: ControlToolSchema,
+    arguments: BoundedArgumentsSchema,
+  })
+  .superRefine((request, ctx) => {
+    if (request.tool !== "resource") return;
+    if (!isResourceReadArguments(request.arguments)) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["arguments"],
+        message:
+          "resource rides the control channel for list/status reads only (RFC §11); start/stop/restart enter the FIFO",
+      });
+    }
+  });
 
 export const ControlResultSchema = z
   .strictObject({
     requestId: UuidSchema,
-    result: z.json().optional(),
+    /**
+     * Depth-bounded only (review F5): logs responses may legitimately carry
+     * more than 10,000 nodes; their size is governed by the RFC §6.2
+     * response byte caps and the frame limit.
+     */
+    result: boundedJson(CONTROL_RESULT_JSON_BOUNDS).optional(),
+    error: StructuredErrorSchema.optional(),
+  })
+  .superRefine((response, ctx) => {
+    const hasResult = response.result !== undefined;
+    const hasError = response.error !== undefined;
+    if (hasResult === hasError) {
+      ctx.addIssue({
+        code: "custom",
+        message: "exactly one of result or error must be present",
+      });
+    }
+  });
+
+/**
+ * Tools whose reads the broker forwards to the bridge control channel
+ * (RFC §11, review F4): served outside the execution FIFO and available
+ * while the queue is paused.
+ */
+export const BRIDGE_READ_TOOLS = ["resource"] as const;
+export type BridgeReadTool = (typeof BRIDGE_READ_TOOLS)[number];
+export const BridgeReadToolSchema = z.enum(BRIDGE_READ_TOOLS);
+
+/** bridge.read.request — broker → bridge control-channel read (RFC §11, review F4). */
+export const BridgeReadRequestSchema = z
+  .strictObject({
+    requestId: UuidSchema,
+    tool: BridgeReadToolSchema,
+    arguments: BoundedArgumentsSchema,
+  })
+  .superRefine((request, ctx) => {
+    if (request.tool === "resource" && !isResourceReadArguments(request.arguments)) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["arguments"],
+        message: "bridge resource reads accept list/status arguments only (RFC §11)",
+      });
+    }
+  });
+
+/**
+ * Result payload of a bridge-served resource read (RFC §11). `source`
+ * distinguishes a live read from the bridge/broker cache — a cache entry
+ * must never be marked live while the server is unresponsive.
+ */
+export const ResourceReadResultSchema = z.discriminatedUnion("action", [
+  z.strictObject({
+    action: z.literal("list"),
+    source: z.enum(["live", "cached"]),
+    resources: z.array(
+      z.strictObject({
+        name: ResourceNameSchema,
+        /** FiveM resource state as reported by GetResourceState. */
+        state: z.string().min(1),
+      }),
+    ),
+  }),
+  z.strictObject({
+    action: z.literal("status"),
+    source: z.enum(["live", "cached"]),
+    name: ResourceNameSchema,
+    state: z.string().min(1),
+  }),
+]);
+
+/** bridge.read.result — bridge → broker reply for a control-channel read (RFC §11). */
+export const BridgeReadResultSchema = z
+  .strictObject({
+    requestId: UuidSchema,
+    result: ResourceReadResultSchema.optional(),
     error: StructuredErrorSchema.optional(),
   })
   .superRefine((response, ctx) => {

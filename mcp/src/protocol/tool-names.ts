@@ -27,15 +27,17 @@ export const ToolNameSchema = z.enum(TOOL_NAMES);
  * table: status、queue、日志及资料). These are broker-local reads/controls
  * that stay responsive while the execution FIFO is paused.
  *
- * Resource list/status reads are NOT here: RFC §11 routes them through the
- * bridge-side control channel and keeps them out of the FIFO; their
- * entry-side routing contract is deferred to the resource-control slice.
+ * `resource` rides this channel for list/status reads only (RFC §11, review
+ * F4): the action-level restriction is enforced by ControlRequestSchema and
+ * BridgeReadRequestSchema; start/stop/restart mutations still enter the FIFO
+ * through task.submit.
  */
 export const CONTROL_TOOLS = [
   "status",
   "queue",
   "logs",
   "reference",
+  "resource",
 ] as const satisfies readonly ToolName[];
 
 export type ControlTool = (typeof CONTROL_TOOLS)[number];

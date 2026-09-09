@@ -78,5 +78,9 @@ test("parseMessage validates the payload against the type schema", () => {
 });
 
 test("every declared message type has a payload schema", () => {
-  assert.equal(MESSAGE_TYPES.length, 18);
+  assert.equal(MESSAGE_TYPES.length, 20);
+  assert.deepEqual(
+    MESSAGE_TYPES.filter((type) => type.startsWith("bridge.read.")),
+    ["bridge.read.request", "bridge.read.result"],
+  );
 });

@@ -3,6 +3,8 @@ import { UuidSchema } from "./ids.ts";
 import {
   ApprovalRequestSchema,
   ApprovalResultSchema,
+  BridgeReadRequestSchema,
+  BridgeReadResultSchema,
   ClientsSnapshotSchema,
   ControlRequestSchema,
   ControlResultSchema,
@@ -49,6 +51,8 @@ export const MESSAGE_TYPES = [
   "clients.snapshot",
   "control.request",
   "control.result",
+  "bridge.read.request",
+  "bridge.read.result",
 ] as const;
 
 export type MessageType = (typeof MESSAGE_TYPES)[number];
@@ -72,6 +76,8 @@ const PAYLOAD_SCHEMAS = {
   "clients.snapshot": ClientsSnapshotSchema,
   "control.request": ControlRequestSchema,
   "control.result": ControlResultSchema,
+  "bridge.read.request": BridgeReadRequestSchema,
+  "bridge.read.result": BridgeReadResultSchema,
 } as const satisfies Record<MessageType, z.ZodType>;
 
 /** Every message type maps to exactly one payload schema (drift guard). */

@@ -1,6 +1,11 @@
 import { z } from "zod";
 import { IsoUtcSchema, UuidSchema } from "./ids.ts";
-import { TargetRefSchema } from "./messages.ts";
+import {
+  BridgeEnvironmentSchema,
+  TargetRefSchema,
+  type BridgeEnvironment,
+  type TargetRef,
+} from "./messages.ts";
 import { LIMITS } from "./limits.ts";
 
 /**
@@ -24,15 +29,17 @@ export type RecoveryToolCategory =
 /**
  * Dispatch intent: written before task.dispatch is sent. Any crash after
  * this record exists is recovered as "may have been dispatched" (RFC §7.2).
- * The target's epoch binding is the clientEpoch inside `target`; the
- * bridge's own generation is identified through the authenticated bridge
- * connection when a late terminal report arrives, not persisted here.
+ * The record persists the execution environment identity (bridge generation
+ * plus FXServer process identity, review F2) alongside the logical target,
+ * so a restarted broker can verify that a late task.result really comes
+ * from the original executor (RFC §7.4: 原执行器回报且身份匹配).
  */
 export const DispatchIntentRecordSchema = z.strictObject({
   kind: z.literal("dispatch_intent"),
   taskId: UuidSchema,
   brokerInstanceId: UuidSchema,
   target: TargetRefSchema,
+  environment: BridgeEnvironmentSchema,
   toolCategory: z.enum(RECOVERY_TOOL_CATEGORIES),
   createdAt: IsoUtcSchema,
 });
@@ -61,3 +68,51 @@ export const RecoveryFileSchema = z.strictObject({
 export type DispatchIntentRecord = z.infer<typeof DispatchIntentRecordSchema>;
 export type SettledRecord = z.infer<typeof SettledRecordSchema>;
 export type RecoveryFile = z.infer<typeof RecoveryFileSchema>;
+
+/** Identity fields shared by every task.result report (both branches). */
+export interface TaskResultIdentity {
+  taskId: string;
+  target: TargetRef;
+  executedBy: BridgeEnvironment;
+}
+
+function sameTarget(a: TargetRef, b: TargetRef): boolean {
+  if (a.side !== b.side) return false;
+  if (a.side === "client" && b.side === "client") {
+    return a.clientId === b.clientId && a.clientEpoch === b.clientEpoch;
+  }
+  return true;
+}
+
+function sameEnvironment(a: BridgeEnvironment, b: BridgeEnvironment): boolean {
+  return (
+    a.bridgeEpoch === b.bridgeEpoch &&
+    a.serverPid === b.serverPid &&
+    a.serverStartedAt === b.serverStartedAt &&
+    a.serverIdentityVerifiable === b.serverIdentityVerifiable
+  );
+}
+
+/**
+ * Identity match between a persisted dispatch intent and a (possibly late)
+ * task.result report (RFC §5.1, §7.4, review F2): the report settles the
+ * recorded task only when the task id, the logical target, and the execution
+ * environment all agree. A reused serverPid with a different
+ * serverStartedAt (PID reuse), a new bridgeEpoch (bridge restart), or a
+ * changed clientEpoch (server ID reuse) each break the match.
+ *
+ * This is the identity component of RFC §7.4 evidence only: callers using a
+ * match to justify the environment-recovery exception must additionally
+ * require environment.serverIdentityVerifiable === true, and a mismatched
+ * report never disposes of the task on its own.
+ */
+export function matchesDispatchIntent(
+  intent: DispatchIntentRecord,
+  report: TaskResultIdentity,
+): boolean {
+  return (
+    intent.taskId === report.taskId &&
+    sameTarget(intent.target, report.target) &&
+    sameEnvironment(intent.environment, report.executedBy)
+  );
+}

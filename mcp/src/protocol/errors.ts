@@ -51,6 +51,18 @@ export const UNKNOWN_OUTCOME_CODES: readonly ErrorCode[] = [
   "CONNECTION_LOST_UNKNOWN",
 ];
 
+/**
+ * Whether an error code marks a broker-observed unknown outcome (RFC §6.4).
+ * Such codes describe states the broker could not verify — they never appear
+ * on bridge-reported terminal results and only attach to the `unknown` task
+ * state (review F3).
+ */
+export function isUnknownOutcomeCode(
+  code: string,
+): code is (typeof UNKNOWN_OUTCOME_CODES)[number] {
+  return (UNKNOWN_OUTCOME_CODES as readonly string[]).includes(code);
+}
+
 export const StructuredErrorSchema = z
   .strictObject({
     code: ErrorCodeSchema,
