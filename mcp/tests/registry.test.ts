@@ -1,0 +1,82 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { z } from "zod";
+import { TOOL_NAMES } from "../src/protocol/tool-names.ts";
+import {
+  REGISTERED_TOOLS,
+  isToolRegistered,
+} from "../src/tools/registry.ts";
+import {
+  TOOL_INPUT_SCHEMAS,
+  toolInputJsonSchema,
+} from "../src/tools/schemas.ts";
+import {
+  SCREENSHOT_ENABLED,
+  SCREENSHOT_IMPLEMENTED,
+} from "../src/contracts/screenshot.disabled.ts";
+
+test("the public tool surface is exactly the ten RFC tools", () => {
+  assert.deepEqual([...TOOL_NAMES], [
+    "status",
+    "queue",
+    "execute_lua",
+    "execute_ts",
+    "resource",
+    "logs",
+    "esx",
+    "qbcore",
+    "ox",
+    "reference",
+  ]);
+  assert.deepEqual(Object.keys(TOOL_INPUT_SCHEMAS).sort(), [...TOOL_NAMES].sort());
+  assert.equal(TOOL_NAMES.includes("screenshot" as never), false);
+});
+
+test("this slice registers only the status tool", () => {
+  assert.deepEqual([...REGISTERED_TOOLS], ["status"]);
+  assert.equal(isToolRegistered("status"), true);
+  for (const tool of TOOL_NAMES) {
+    if (tool === "status") continue;
+    assert.equal(isToolRegistered(tool), false, `${tool} is not registered yet`);
+  }
+});
+
+test("every tool schema is strict and generates JSON Schema from the same declaration", () => {
+  for (const tool of TOOL_NAMES) {
+    const schema = TOOL_INPUT_SCHEMAS[tool];
+    const probe = schema.safeParse({ __unexpected__: true });
+    if (tool === "queue" || tool === "resource") {
+      // discriminated unions reject unknown discriminators outright
+      assert.equal(probe.success, false);
+    } else {
+      assert.equal(probe.success, false, `${tool} must reject unknown top-level fields`);
+    }
+    const jsonSchema = toolInputJsonSchema(tool);
+    assert.equal(typeof jsonSchema, "object", `${tool} JSON Schema generation`);
+  }
+});
+
+test("generated tool JSON Schema stays strict (additionalProperties false)", () => {
+  const statusSchema = toolInputJsonSchema("status") as {
+    type?: string;
+    additionalProperties?: boolean;
+    properties?: Record<string, unknown>;
+  };
+  assert.equal(statusSchema.type, "object");
+  assert.equal(statusSchema.additionalProperties, false);
+  assert.deepEqual(Object.keys(statusSchema.properties ?? {}), ["clientId"]);
+});
+
+test("the screenshot contract is disabled and unregistered", () => {
+  assert.equal(SCREENSHOT_IMPLEMENTED, false);
+  assert.equal(SCREENSHOT_ENABLED, false);
+  assert.equal(
+    (REGISTERED_TOOLS as readonly string[]).includes("screenshot"),
+    false,
+  );
+});
+
+test("zod remains importable at the pinned major behavior used by contracts", () => {
+  assert.equal(typeof z.strictObject, "function");
+  assert.equal(typeof z.toJSONSchema, "function");
+});
