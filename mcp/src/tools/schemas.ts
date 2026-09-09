@@ -2,6 +2,11 @@ import { z } from "zod";
 import { PlayerIdSchema } from "../protocol/ids.ts";
 import { LIMITS } from "../protocol/limits.ts";
 import { utf8ByteLength } from "../protocol/utf8.ts";
+import {
+  ARGS_JSON_BOUNDS,
+  boundedJson,
+  boundedJsonArray,
+} from "../protocol/json-bounds.ts";
 import type { ToolName } from "../protocol/tool-names.ts";
 
 /**
@@ -19,7 +24,7 @@ import type { ToolName } from "../protocol/tool-names.ts";
 
 const SideSchema = z.enum(["server", "client"]);
 
-const ResourceNameSchema = z
+export const ResourceNameSchema = z
   .string()
   .min(1)
   .max(128)
@@ -141,7 +146,7 @@ const ExecuteInputSchema = z
     code: z
       .string()
       .superRefine(utf8BytesAtMost(LIMITS.payload.codeMaxBytes, "code")),
-    args: z.json().default({}),
+    args: boundedJson(ARGS_JSON_BOUNDS).default({}),
     clientId: PlayerIdSchema.optional(),
     timeoutMs: TimeoutMsSchema,
   })
@@ -209,7 +214,7 @@ const FrameworkInputSchema = z
     side: SideSchema,
     scope: z.enum(["framework", "player"]),
     method: MethodPathSchema,
-    args: z.array(z.json()).default([]),
+    args: boundedJsonArray(ARGS_JSON_BOUNDS).default([]),
     clientId: PlayerIdSchema.optional(),
     playerId: PlayerIdSchema.optional(),
     timeoutMs: TimeoutMsSchema,
@@ -250,7 +255,7 @@ export const OxInputSchema = z
     library: z.enum(["ox_lib", "ox_target", "oxmysql"]),
     side: SideSchema,
     method: MethodPathSchema,
-    args: z.array(z.json()).default([]),
+    args: boundedJsonArray(ARGS_JSON_BOUNDS).default([]),
     clientId: PlayerIdSchema.optional(),
     timeoutMs: TimeoutMsSchema,
   })

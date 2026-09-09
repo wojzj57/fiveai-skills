@@ -47,6 +47,14 @@ export const LIMITS = {
   payload: {
     codeMaxBytes: 64 * 1024,
     argsMaxBytes: 128 * 1024,
+    /**
+     * Defined input-depth policy (review F5): submitted JSON arguments are
+     * bounded to the same depth/element ceilings as encoded results so the
+     * iterative bounds check rejects pathological payloads with a structured
+     * validation error before any recursive schema runs.
+     */
+    argsMaxDepth: 32,
+    argsMaxElementCount: 10_000,
   },
   /** RFC §6.2: encoded result ceilings. */
   result: {

@@ -8,6 +8,7 @@ export * from "./protocol/limits.ts";
 export * from "./protocol/ids.ts";
 export * from "./protocol/errors.ts";
 export * from "./protocol/utf8.ts";
+export * from "./protocol/json-bounds.ts";
 export * from "./protocol/tool-names.ts";
 export * from "./protocol/wire-value.ts";
 export * from "./protocol/config.ts";

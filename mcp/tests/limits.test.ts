@@ -33,6 +33,9 @@ test("engineering limits stay at the RFC-fixed values", () => {
   assert.deepEqual(LIMITS.payload, {
     codeMaxBytes: 64 * 1024,
     argsMaxBytes: 128 * 1024,
+    // Review F5 input policy: aligned with the result encoding ceilings.
+    argsMaxDepth: 32,
+    argsMaxElementCount: 10_000,
   });
   assert.deepEqual(LIMITS.result, {
     maxBytes: 256 * 1024,

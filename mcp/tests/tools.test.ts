@@ -95,6 +95,44 @@ test("encoded args are limited to 128 KiB", () => {
   );
 });
 
+test("deep or oversized args fail as structured validation errors, not RangeError (review F5)", () => {
+  // 2,000 nesting levels are only ~4 KiB — well under the byte budget —
+  // but exceed the defined input depth policy.
+  let deep: unknown = 0;
+  for (let index = 0; index < 2_000; index += 1) deep = [deep];
+  for (const schema of [ExecuteLuaInputSchema, ExecuteTsInputSchema]) {
+    const result = schema.safeParse({ side: "server", code: "return args", args: deep });
+    assert.equal(result.success, false, "deep args are rejected");
+  }
+  // Legitimate nesting stays accepted.
+  accepts(
+    ExecuteLuaInputSchema,
+    {
+      side: "server",
+      code: "return args",
+      args: { list: [1, [2, [3, [4, { key: "value" }]]]] },
+    },
+    "moderately nested args",
+  );
+  // Wide-but-shallow args beyond the element count are rejected.
+  const wide = Array.from({ length: 10_001 }, (_, index) => index);
+  rejects(
+    ExecuteLuaInputSchema,
+    { side: "server", code: "return args", args: wide },
+    "element count above the input policy",
+  );
+  rejects(
+    EsxInputSchema,
+    { side: "server", scope: "framework", method: "GetJobs", args: wide },
+    "framework args element count above the input policy",
+  );
+  rejects(
+    OxInputSchema,
+    { library: "oxmysql", side: "server", method: "query", args: wide },
+    "ox args element count above the input policy",
+  );
+});
+
 test("resource actions require exact names without wildcards or paths", () => {
   accepts(ResourceInputSchema, { action: "list" }, "list takes no name");
   accepts(ResourceInputSchema, { action: "status", name: "my-resource" }, "status with name");
