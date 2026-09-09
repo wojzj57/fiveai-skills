@@ -12,6 +12,3 @@ __pycache__/
 # Node
 node_modules/
 mcp/dist/
-
-# Local notes
-/notes/
