@@ -67,6 +67,44 @@ test("generated tool JSON Schema stays strict (additionalProperties false)", () 
   assert.deepEqual(Object.keys(statusSchema.properties ?? {}), ["clientId"]);
 });
 
+test("generated framework/ox schemas keep the args array contract (completeness review F4)", () => {
+  for (const tool of ["esx", "qbcore", "ox"] as const) {
+    const generated = toolInputJsonSchema(tool) as {
+      properties?: Record<string, { type?: string; default?: unknown }>;
+    };
+    const args = generated.properties?.args;
+    assert.equal(args?.type, "array", `${tool} args must generate type:"array"`);
+    assert.deepEqual(args?.default, []);
+    assert.notEqual(args?.type, undefined);
+  }
+  // Runtime validation agrees with the published shape: only arrays pass,
+  // and the iterative bounds still reject deep/wide payloads structurally.
+  const base = { side: "server", scope: "framework", method: "GetJobs" } as const;
+  assert.equal(
+    TOOL_INPUT_SCHEMAS.esx.safeParse({ ...base, args: [1, "two", null] }).success,
+    true,
+  );
+  assert.equal(
+    TOOL_INPUT_SCHEMAS.esx.safeParse({ ...base, args: { 0: "positional" } }).success,
+    false,
+  );
+  assert.equal(
+    TOOL_INPUT_SCHEMAS.esx.safeParse({ ...base, args: "query" }).success,
+    false,
+  );
+  const oxBase = { library: "ox_lib", side: "server", method: "notify" } as const;
+  let deep: unknown = 0;
+  for (let index = 0; index < 2_000; index += 1) deep = [deep];
+  assert.equal(
+    TOOL_INPUT_SCHEMAS.ox.safeParse({ ...oxBase, args: deep }).success,
+    false,
+  );
+  assert.equal(
+    TOOL_INPUT_SCHEMAS.ox.safeParse({ ...oxBase, args: [] }).success,
+    true,
+  );
+});
+
 test("the screenshot contract is disabled and unregistered", () => {
   assert.equal(SCREENSHOT_IMPLEMENTED, false);
   assert.equal(SCREENSHOT_ENABLED, false);

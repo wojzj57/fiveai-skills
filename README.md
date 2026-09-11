@@ -132,8 +132,8 @@ You can also download individual skills from [usefiveai.vercel.app/skills](https
 The validator uses Node.js built-ins only and does not install dependencies:
 
 ```powershell
-npm test
-npm run validate
+pnpm test
+pnpm validate
 ```
 
 

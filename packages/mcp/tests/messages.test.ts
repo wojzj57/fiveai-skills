@@ -23,7 +23,11 @@ import {
   TaskSubmitSchema,
   WelcomeSchema,
 } from "../src/protocol/messages.ts";
-import { ResourceInputSchema } from "../src/tools/schemas.ts";
+import {
+  EsxInputSchema,
+  ExecuteLuaInputSchema,
+  ResourceInputSchema,
+} from "../src/tools/schemas.ts";
 
 const UUID = "123e4567-e89b-42d3-a456-426614174000";
 const EPOCH = "epoch-0123456789";
@@ -285,15 +289,82 @@ test("failure evidence follows the RFC error stages (review F3)", () => {
     failedWith("RESULT_TOO_LARGE", { executionCompleted: false, noRemoteExecution: false }),
     false,
   );
-  // Other stages carry their own evidence; the schema does not guess.
+  // RFC §8: an executor only reports a terminal after the function ended.
+  // false/false proves neither end nor non-execution (completeness review F2).
   assert.equal(
     failedWith("EXECUTION_ERROR", { executionCompleted: true, noRemoteExecution: false }),
     true,
   );
   assert.equal(
     failedWith("EXECUTION_ERROR", { executionCompleted: false, noRemoteExecution: false }),
+    false,
+  );
+  // The two flags are mutually exclusive.
+  assert.equal(
+    failedWith("EXECUTION_ERROR", { executionCompleted: true, noRemoteExecution: true }),
+    false,
+  );
+  // Codes without a pinned stage still need one of the two proofs.
+  assert.equal(
+    failedWith("TARGET_SESSION_CHANGED", { executionCompleted: false, noRemoteExecution: true }),
     true,
   );
+  assert.equal(
+    failedWith("TARGET_SESSION_CHANGED", { executionCompleted: false, noRemoteExecution: false }),
+    false,
+  );
+  assert.equal(
+    failedWith("TARGET_SESSION_CHANGED", { executionCompleted: true, noRemoteExecution: true }),
+    false,
+  );
+});
+
+test("the failure evidence matrix covers direct results and status queries alike (completeness review F2)", () => {
+  const cases: Array<{ code: string; evidence: unknown; expected: boolean }> = [
+    // Stage-specific combinations.
+    { code: "COMPILATION_ERROR", evidence: { executionCompleted: false, noRemoteExecution: true }, expected: true },
+    { code: "COMPILATION_ERROR", evidence: { executionCompleted: false, noRemoteExecution: false }, expected: false },
+    { code: "EXECUTION_ERROR", evidence: { executionCompleted: true, noRemoteExecution: false }, expected: true },
+    { code: "EXECUTION_ERROR", evidence: { executionCompleted: false, noRemoteExecution: false }, expected: false },
+    { code: "RESULT_TOO_LARGE", evidence: { executionCompleted: true, noRemoteExecution: false }, expected: true },
+    // Completeness-review repro: false/false passed the status path before.
+    { code: "RESULT_TOO_LARGE", evidence: { executionCompleted: false, noRemoteExecution: false }, expected: false },
+    { code: "RESULT_UNSERIALIZABLE", evidence: { executionCompleted: false, noRemoteExecution: false }, expected: false },
+    // Contradictory flags never pass.
+    { code: "SELF_RESOURCE_PROTECTED", evidence: { executionCompleted: true, noRemoteExecution: true }, expected: false },
+    // Pre-execution detection is honest evidence for non-stage codes.
+    { code: "SELF_RESOURCE_PROTECTED", evidence: { executionCompleted: false, noRemoteExecution: true }, expected: true },
+  ];
+  for (const { code, evidence, expected } of cases) {
+    const error = { code, message: "stage" };
+    const result = TaskResultSchema.safeParse({
+      taskId: UUID,
+      target: { side: "server" },
+      executedBy: ENV,
+      state: "failed",
+      error,
+      evidence,
+      queuedMs: 10,
+      executionMs: 20,
+    });
+    assert.equal(
+      result.success,
+      expected,
+      `task.result ${code} ${JSON.stringify(evidence)}`,
+    );
+    const status = TaskStatusResultSchema.safeParse({
+      taskId: UUID,
+      state: "failed",
+      resultAvailable: true,
+      error,
+      evidence,
+    });
+    assert.equal(
+      status.success,
+      expected,
+      `task.statusResult ${code} ${JSON.stringify(evidence)}`,
+    );
+  }
 });
 
 test("late terminal reports may carry the original broker generation", () => {
@@ -356,6 +427,110 @@ test("task.submit only accepts FIFO tools; read/control tools ride control.reque
       `${tool} must not enter task.submit`,
     );
   }
+});
+
+test("public-legal boundary inputs survive submit and dispatch wrapping (completeness review F3)", () => {
+  const nestedArrays = (depth: number, leaf: unknown = 0) => {
+    let value = leaf;
+    for (let index = 0; index < depth; index += 1) value = [value];
+    return value;
+  };
+  const flatScalars = (count: number) =>
+    Array.from({ length: count }, (_, index) => index);
+
+  const submitWith = (arguments_: unknown) =>
+    TaskSubmitSchema.safeParse({
+      tool: "execute_lua",
+      arguments: arguments_,
+      requestId: UUID,
+    });
+  const dispatchWith = (arguments_: unknown) =>
+    TaskDispatchSchema.safeParse({
+      taskId: UUID,
+      target: { side: "server" },
+      tool: "execute_lua",
+      arguments: arguments_,
+      deadlineMs: 30_000,
+      timeoutMs: 30_000,
+    });
+
+  // Depth 31 and 32 pass the public layer AND the wrapped internal messages;
+  // depth 33 fails the public tool schema (authoritative for args).
+  for (const depth of [31, 32]) {
+    const parsed = ExecuteLuaInputSchema.safeParse({
+      side: "server",
+      code: "return args",
+      args: nestedArrays(depth),
+    });
+    assert.equal(parsed.success, true, `depth ${depth} is public-legal`);
+    assert.equal(
+      submitWith(parsed.success ? parsed.data : null).success,
+      true,
+      `depth ${depth} survives task.submit`,
+    );
+    assert.equal(
+      dispatchWith(parsed.success ? parsed.data : null).success,
+      true,
+      `depth ${depth} survives task.dispatch`,
+    );
+  }
+  assert.equal(
+    ExecuteLuaInputSchema.safeParse({
+      side: "server",
+      code: "return args",
+      args: nestedArrays(33),
+    }).success,
+    false,
+  );
+
+  // Element cap: a 10,000-node args array is public-legal and must pass the
+  // internal messages once the wrapper overhead is budgeted.
+  const exactCap = ExecuteLuaInputSchema.safeParse({
+    side: "server",
+    code: "return args",
+    args: flatScalars(9_999), // root array + 9,999 scalars = 10,000 nodes
+  });
+  assert.equal(exactCap.success, true);
+  assert.equal(submitWith(exactCap.success ? exactCap.data : null).success, true);
+  assert.equal(dispatchWith(exactCap.success ? exactCap.data : null).success, true);
+  assert.equal(
+    ExecuteLuaInputSchema.safeParse({
+      side: "server",
+      code: "return args",
+      args: flatScalars(10_000), // 10,001 nodes
+    }).success,
+    false,
+  );
+
+  // The widest tool input (framework: 7 scalar fields + wrapper) still fits
+  // the message budget at the args element cap.
+  const frameworkInput = EsxInputSchema.parse({
+    side: "server",
+    scope: "player",
+    method: "getMoney",
+    playerId: 2,
+    args: flatScalars(9_999),
+  });
+  assert.equal(
+    TaskSubmitSchema.safeParse({
+      tool: "esx",
+      arguments: frameworkInput,
+      requestId: UUID,
+    }).success,
+    true,
+  );
+
+  // The message-level guard still rejects payloads that exceed even the
+  // wrapper-inclusive budget (depth 33 args = 34 wrapped levels).
+  assert.equal(
+    submitWith({
+      side: "server",
+      code: "return args",
+      args: nestedArrays(33),
+      timeoutMs: 30_000,
+    }).success,
+    false,
+  );
 });
 
 test("resource reads are blocked from the FIFO at the wire level (RFC §11)", () => {

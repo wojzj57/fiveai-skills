@@ -6,6 +6,7 @@ import { LIMITS } from "./limits.ts";
 import { ControlToolSchema, FifoToolSchema } from "./tool-names.ts";
 import {
   ARGS_JSON_BOUNDS,
+  MESSAGE_ARGUMENTS_JSON_BOUNDS,
   CONTROL_RESULT_JSON_BOUNDS,
   boundedJson,
 } from "./json-bounds.ts";
@@ -19,8 +20,16 @@ import { ResourceInputSchema, ResourceNameSchema } from "../tools/schemas.ts";
  * the wire contract.
  */
 
-/** Bounded JSON field for submitted tool arguments (review F5 input policy). */
-const BoundedArgumentsSchema = boundedJson(ARGS_JSON_BOUNDS);
+/**
+ * Bounded JSON field for a complete tool input submitted through an internal
+ * message (completeness review F3): the iterative guard budgets the tool
+ * input wrapper on top of the business args; the tool schema remains the
+ * authority for the args themselves.
+ */
+const BoundedArgumentsSchema = boundedJson(MESSAGE_ARGUMENTS_JSON_BOUNDS);
+
+/** Bounded JSON field for raw approval parameters (no tool-input wrapper). */
+const BoundedParametersSchema = boundedJson(ARGS_JSON_BOUNDS);
 
 /** Task lifecycle states (design §6.1). */
 export const TASK_STATES = [
@@ -190,6 +199,50 @@ export const FailureEvidenceSchema = z.strictObject({
 export type FailureEvidence = z.infer<typeof FailureEvidenceSchema>;
 
 /**
+ * Shared completion-evidence rules for every failed payload, direct
+ * (task.result) and queried (task.statusResult) alike (completeness review
+ * F2). A failed terminal must prove one of:
+ * - the remote function ended (`executionCompleted=true`) — the queue may
+ *   advance; or
+ * - the fragment never started remotely (`noRemoteExecution=true`) — ending
+ *   the task is safe because nothing executed.
+ *
+ * `false/false` proves neither and `true/true` is contradictory, so both are
+ * rejected. Stage-specific codes pin the exact legal combination: compiler
+ * errors happen before execution, execution errors mean the function ran and
+ * ended, and serialization failures mean it already ended (RFC §6.3, §8).
+ * Returns the rejection message, or null when the evidence is legal.
+ */
+export function failureEvidenceIssue(
+  code: string,
+  evidence: FailureEvidence,
+): string | null {
+  const { executionCompleted, noRemoteExecution } = evidence;
+  if (!executionCompleted && !noRemoteExecution) {
+    return "failed terminals must prove executionCompleted or noRemoteExecution (RFC §8)";
+  }
+  if (executionCompleted && noRemoteExecution) {
+    return "executionCompleted and noRemoteExecution are mutually exclusive";
+  }
+  if (code === "COMPILATION_ERROR") {
+    return executionCompleted === false && noRemoteExecution === true
+      ? null
+      : "COMPILATION_ERROR must report executionCompleted=false and noRemoteExecution=true (RFC §8)";
+  }
+  if (code === "EXECUTION_ERROR") {
+    return executionCompleted === true
+      ? null
+      : "EXECUTION_ERROR means the function ran and ended: executionCompleted=true (RFC §8)";
+  }
+  if (code === "RESULT_UNSERIALIZABLE" || code === "RESULT_TOO_LARGE") {
+    return executionCompleted === true
+      ? null
+      : `${code} means the remote function already ended: executionCompleted=true (RFC §6.3)`;
+  }
+  return null;
+}
+
+/**
  * task.result — bridge → broker → entry (RFC §5.1, §6.3). Only terminal
  * outcomes are reported; `unknown` is a broker-observed state and never a
  * bridge report — failed results therefore reject the unknown-outcome error
@@ -226,40 +279,17 @@ export const TaskResultSchema = z.discriminatedUnion("state", [
       originalBrokerInstanceId: UuidSchema.optional(),
     })
     .superRefine((failure, ctx) => {
-      const { error, evidence } = failure;
-      if (isUnknownOutcomeCode(error.code)) {
+      if (isUnknownOutcomeCode(failure.error.code)) {
         ctx.addIssue({
           code: "custom",
           path: ["error"],
-          message: `${error.code} is a broker-observed unknown state, never a bridge-reported terminal result (RFC §6.2)`,
+          message: `${failure.error.code} is a broker-observed unknown state, never a bridge-reported terminal result (RFC §6.2)`,
         });
         return;
       }
-      if (error.code === "COMPILATION_ERROR") {
-        if (
-          evidence.executionCompleted !== false ||
-          evidence.noRemoteExecution !== true
-        ) {
-          ctx.addIssue({
-            code: "custom",
-            path: ["evidence"],
-            message:
-              "COMPILATION_ERROR must report executionCompleted=false and noRemoteExecution=true (RFC §8)",
-          });
-        }
-        return;
-      }
-      if (
-        error.code === "RESULT_UNSERIALIZABLE" ||
-        error.code === "RESULT_TOO_LARGE"
-      ) {
-        if (evidence.executionCompleted !== true) {
-          ctx.addIssue({
-            code: "custom",
-            path: ["evidence"],
-            message: `${error.code} means the remote function already ended: executionCompleted=true (RFC §6.3)`,
-          });
-        }
+      const issue = failureEvidenceIssue(failure.error.code, failure.evidence);
+      if (issue !== null) {
+        ctx.addIssue({ code: "custom", path: ["evidence"], message: issue });
       }
     }),
 ]);
@@ -344,6 +374,23 @@ export const TaskStatusResultSchema = z
             "unknown-outcome codes never mark a verified failed terminal",
           );
         }
+        // The same stage/evidence matrix as direct task.result reports
+        // (completeness review F2): a reconnection status query cannot
+        // accept evidence the direct path would reject.
+        if (
+          hasError &&
+          hasEvidence &&
+          status.error !== undefined &&
+          status.evidence !== undefined
+        ) {
+          const issue = failureEvidenceIssue(
+            status.error.code,
+            status.evidence,
+          );
+          if (issue !== null) {
+            add("evidence", issue);
+          }
+        }
         break;
       case "unknown":
         if (status.resultAvailable) {
@@ -386,7 +433,7 @@ export const ApprovalRequestSchema = z.strictObject({
   digest: z.string().min(1),
   method: z.string().min(1),
   sql: z.string().min(1),
-  parameters: BoundedArgumentsSchema,
+  parameters: BoundedParametersSchema,
   serverEpoch: EpochSchema,
   bridgeEpoch: EpochSchema,
   entrySessionId: UuidSchema,

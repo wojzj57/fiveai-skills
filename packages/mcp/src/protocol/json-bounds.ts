@@ -116,6 +116,22 @@ export const ARGS_JSON_BOUNDS: JsonBounds = {
 };
 
 /**
+ * Bounds for a complete tool input carried inside an internal message
+ * (completeness review F3). task.submit/task.dispatch/control.request wrap
+ * the whole tool input — side, code, args, timeouts, targeting fields — so
+ * the message-level guard must budget the wrapper on top of the business
+ * args: one extra container level (the tool input object) and at most eight
+ * extra nodes (the widest tool input carries seven scalar fields plus the
+ * wrapper object itself). A public-layer-legal maximal input then passes the
+ * internal messages; the authoritative per-tool args validation still runs
+ * against the tool schema at the trusted boundary.
+ */
+export const MESSAGE_ARGUMENTS_JSON_BOUNDS: JsonBounds = {
+  maxDepth: LIMITS.payload.argsMaxDepth + 1,
+  maxElements: LIMITS.payload.argsMaxElementCount + 8,
+};
+
+/**
  * Bounds for control-channel results: depth-bounded only. Logs responses may
  * legitimately carry more than 10,000 nodes (1,000 records); their size is
  * governed by the RFC §6.2 response byte caps and the 1 MiB frame limit.
@@ -138,12 +154,20 @@ export function boundedJson(bounds: JsonBounds): z.ZodType<JsonValue> {
   );
 }
 
-/** Bounded JSON array field for positional tool arguments. */
+/**
+ * Bounded JSON array field for positional tool arguments. The array TYPE is
+ * declared with z.array so the generated JSON Schema keeps `type:"array"`
+ * (completeness review F4); the iterative bounds check runs as a refinement
+ * over the whole value, so deep or oversized arrays still fail as
+ * structured validation errors rather than RangeError.
+ */
 export function boundedJsonArray(bounds: JsonBounds): z.ZodType<JsonValue[]> {
-  return z.custom<JsonValue[]>(
-    (value) => Array.isArray(value) && checkJsonBounds(value, bounds).ok,
-    {
-      message: `value must be a JSON array within bounds (depth <= ${bounds.maxDepth}, elements <= ${bounds.maxElements ?? "unlimited"})`,
-    },
-  );
+  return z
+    .array(z.custom<JsonValue>(() => true))
+    .superRefine((value, ctx) => {
+      const result = checkJsonBounds(value, bounds);
+      if (!result.ok) {
+        ctx.addIssue({ code: "custom", message: result.message });
+      }
+    });
 }

@@ -126,14 +126,24 @@ export type TypedMessage<T extends MessageType> = Omit<
   payload: MessagePayloadOf<T>;
 };
 
+/** Any parsed message, discriminated by `type` (usable in switch narrowing). */
+export type AnyTypedMessage = {
+  [T in MessageType]: TypedMessage<T>;
+}[MessageType];
+
 /**
  * Parse an envelope and validate its payload against the schema registered
  * for its message type. Throws a ZodError on any violation.
  */
+export function parseMessage(value: unknown): AnyTypedMessage;
 export function parseMessage<T extends MessageType>(
   value: unknown,
-  expectedType?: T,
-): TypedMessage<T> {
+  expectedType: T,
+): TypedMessage<T>;
+export function parseMessage(
+  value: unknown,
+  expectedType?: MessageType,
+): AnyTypedMessage {
   const envelope = MessageEnvelopeSchema.parse(value);
   if (expectedType !== undefined && envelope.type !== expectedType) {
     throw new z.ZodError([
@@ -144,8 +154,10 @@ export function parseMessage<T extends MessageType>(
       },
     ]);
   }
-  const payload = PAYLOAD_SCHEMAS[envelope.type].parse(
-    envelope.payload,
-  ) as MessagePayloadOf<T>;
-  return { ...envelope, type: envelope.type as T, payload };
+  const payload = PAYLOAD_SCHEMAS[envelope.type].parse(envelope.payload);
+  return {
+    ...envelope,
+    type: envelope.type,
+    payload,
+  } as AnyTypedMessage;
 }

@@ -1,0 +1,31 @@
+{
+  "name": "fiveai-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "FiveM local debug MCP (FiveAI) - v1 type contracts.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "build": "pnpm run build:contracts && pnpm run build:entry && pnpm run build:broker",
+    "build:contracts": "esbuild src/index.ts --bundle --format=esm --platform=node --outfile=dist/index.mjs",
+    "build:entry": "esbuild src/cli/entry.ts --bundle --format=esm --platform=node --outfile=dist/entry.mjs --banner:js=\"import { createRequire as __cr } from 'module'; const require = __cr(import.meta.url);\"",
+    "build:broker": "esbuild src/broker/main.ts --bundle --format=esm --platform=node --outfile=dist/broker.mjs --banner:js=\"import { createRequire as __cr } from 'module'; const require = __cr(import.meta.url);\"",
+    "typecheck": "tsc --noEmit",
+    "test": "pnpm run typecheck && pnpm run build && node --test \"tests/**/*.test.ts\""
+  },
+  "dependencies": {
+    "@fastify/websocket": "11.3.0",
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "fastify": "5.12.3",
+    "ws": "8.21.3",
+    "zod": "4.5.4"
+  },
+  "devDependencies": {
+    "@types/node": "22.18.1",
+    "@types/ws": "8.18.1",
+    "esbuild": "0.28.2",
+    "typescript": "5.9.3"
+  }
+}
