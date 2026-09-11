@@ -1,8 +1,11 @@
 import WebSocket from "ws";
 import { randomUUID, randomBytes } from "node:crypto";
 import { execFile } from "node:child_process";
+import { readFile, lstat } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { createExecutor, utf8Bytes } from "../shared/execution.js";
 import { validOutcome } from "../shared/outcome.js";
+import { McpConfigSchema, resolveConfigPaths, validateCredentialFile } from "fiveai-mcp/internal/config";
 
 const resource = GetCurrentResourceName();
 const event = name => `${resource}:${name}`;
@@ -26,6 +29,22 @@ const environment = {
   serverIdentityVerifiable: false,
 };
 
+// Startup state machine (unified-artifact RFC section 6):
+//   load-config -> wait-credentials -> connect <-> connected
+//   any config/credential error -> invalid (terminal until the resource restarts)
+// The bridge settings come from mcp/config.json inside the resource path;
+// the old fiveai_mcp_* convars are gone and must never return alongside the
+// file so there are no two configuration sources with implicit precedence.
+let phase = "load-config";
+let bridge = null;            // { url, credentialFile, token } once each stage completes
+let verifyEnabled = false;    // Read once at resource start (RFC section 6).
+let configPath = null;
+let bootstrapStarted = false;
+let credentialTimer = null;
+let credentialReadInFlight = false;
+let credentialAttempts = 0;
+let lastCredentialNoticeAt = 0;
+
 // An unavailable OS identity remains explicitly unverifiable. Never use the
 // resource epoch as evidence of an FXServer process restart.
 if (process.platform === "win32") {
@@ -35,12 +54,6 @@ if (process.platform === "win32") {
       incoming.push({ kind: "identity", startedAt: !error && Number.isFinite(Date.parse(stdout.trim())) ? new Date(stdout.trim()).toISOString() : null });
     });
 }
-
-// Private server convars only. Never replicate these or include them in files.
-const url = GetConvar("fiveai_mcp_broker_url", "ws://127.0.0.1:43189/internal/v1/bridge");
-const token = GetConvar("fiveai_mcp_bridge_token", "");
-const enabled = /^ws:\/\/127\.0\.0\.1:\d+\/internal\/v1\/bridge$/.test(url) && /^[A-Za-z0-9+/]+={0,2}$/.test(token) && Buffer.from(token, "base64").length >= 32;
-if (!enabled) console.log("[fivem-plugin] bridge disconnected: configure private broker URL and bridge token");
 
 function send(type, payload) {
   if (socket?.readyState !== WebSocket.OPEN || !identity) return;
@@ -56,7 +69,7 @@ function snapshot() {
 }
 
 function connect() {
-  const ws = new WebSocket(url, { headers: { Authorization: `Bearer ${token}` }, maxPayload: 1048576, perMessageDeflate: false });
+  const ws = new WebSocket(bridge.url, { headers: { Authorization: `Bearer ${bridge.token}` }, maxPayload: 1048576, perMessageDeflate: false });
   socket = ws; lastSeen = Date.now();
   // These callbacks perform no natives, exports or cross-runtime emits.
   ws.on("open", () => {
@@ -69,13 +82,60 @@ function connect() {
   ws.on("close", () => {
     if (socket !== ws) return;
     socket = null; identity = null;
+    if (phase === "connected") phase = "connect";
     retryAt = Date.now() + ([1000, 2000, 4000, 8000][attempts++] ?? 10000) + Math.floor(Math.random() * 500);
   });
   ws.on("error", () => {}); // close schedules reconnect; token never enters logs.
 }
 
+// Credential polling (RFC section 6): missing credentials keep waiting with
+// the 1/2/4/8/10s capped backoff, at most one file read in flight, and the
+// same waiting diagnostic at most once every 30 seconds. Corrupt or
+// unreadable credentials are terminal for this resource start.
+function scheduleCredentialRead(delayMs) {
+  if (stopped || phase !== "wait-credentials" || credentialTimer !== null || credentialReadInFlight) return;
+  credentialTimer = setTimeout(pollCredentials, delayMs);
+}
+
+function pollCredentials() {
+  credentialTimer = null;
+  if (stopped || phase !== "wait-credentials" || credentialReadInFlight) return;
+  credentialReadInFlight = true;
+  const target = bridge.credentialFile;
+  // Plain file I/O: these callbacks must never call natives or exports.
+  lstat(target).then(
+    stat => {
+      readFile(target, "utf8").then(
+        text => {
+          credentialReadInFlight = false;
+          if (!stopped) incoming.push({ kind: "credentials", facts: { isRegularFile: stat.isFile(), isSymbolicLink: stat.isSymbolicLink(), linkCount: stat.nlink }, text });
+        },
+        error => {
+          credentialReadInFlight = false;
+          if (!stopped) incoming.push({ kind: "credentials-error", code: error?.code ?? "EIO" });
+        },
+      );
+    },
+    error => {
+      credentialReadInFlight = false;
+      if (!stopped) incoming.push({ kind: "credentials-error", code: error?.code ?? "EIO" });
+    },
+  );
+}
+
 setTick(() => {
   if (stopped) return;
+  if (!bootstrapStarted) {
+    // The resource directory is resolved on the host tick (RFC section 6);
+    // renames do not matter because the path follows GetCurrentResourceName.
+    bootstrapStarted = true;
+    const resourcePath = GetResourcePath(resource);
+    configPath = join(resourcePath, "mcp", "config.json");
+    readFile(configPath, "utf8").then(
+      text => { if (!stopped) incoming.push({ kind: "config", text }); },
+      error => { if (!stopped) incoming.push({ kind: "config-error", code: error?.code ?? "EIO" }); },
+    );
+  }
   for (let n = 0; n < 32 && incoming.length; n++) {
     const item = incoming.shift();
     if (item.kind === "identity") {
@@ -85,6 +145,54 @@ setTick(() => {
     }
     if (item.kind === "host-work") {
       try { item.resolve(item.work()); } catch (error) { item.reject(error); }
+      continue;
+    }
+    if (item.kind === "config" || item.kind === "config-error") {
+      if (phase !== "load-config") continue; // late or duplicated bootstrap result
+      if (item.kind === "config-error") {
+        phase = "invalid";
+        console.log(`[fivem-plugin] mcp config unavailable (${item.code}); the installation looks incomplete - fix it and restart the resource`);
+        continue;
+      }
+      try {
+        const config = McpConfigSchema.parse(JSON.parse(item.text));
+        const resolved = resolveConfigPaths(config, dirname(configPath));
+        bridge = { url: `ws://127.0.0.1:${resolved.broker.port}/internal/v1/bridge`, credentialFile: resolved.credentialFile, token: null };
+        verifyEnabled = resolved.verifyEnabled === true;
+        phase = "wait-credentials";
+        scheduleCredentialRead(0);
+      } catch {
+        // Report the error kind only - never file contents or tokens.
+        phase = "invalid";
+        console.log("[fivem-plugin] mcp config invalid (not valid JSON or failed schema validation); fix mcp/config.json and restart the resource");
+      }
+      continue;
+    }
+    if (item.kind === "credentials" || item.kind === "credentials-error") {
+      if (phase !== "wait-credentials") continue; // late result after a transition
+      if (item.kind === "credentials-error") {
+        if (item.code === "ENOENT") {
+          const now = Date.now();
+          if (now - lastCredentialNoticeAt >= 30000) {
+            lastCredentialNoticeAt = now;
+            console.log("[fivem-plugin] mcp credentials not present yet; waiting for first-run initialization by the desktop entry");
+          }
+          scheduleCredentialRead([1000, 2000, 4000, 8000, 10000][credentialAttempts++] ?? 10000);
+        } else {
+          phase = "invalid";
+          console.log(`[fivem-plugin] mcp credentials unreadable (${item.code}); fix the file access and restart the resource`);
+        }
+        continue;
+      }
+      try {
+        const credentials = validateCredentialFile(bridge.credentialFile, item.facts, item.text);
+        bridge.token = credentials.bridgeToken;
+        phase = "connect";
+        retryAt = 0;
+      } catch {
+        phase = "invalid";
+        console.log("[fivem-plugin] mcp credentials invalid (corrupt or wrong form); fix or remove the file and restart the resource");
+      }
       continue;
     }
     if (item.ws !== socket || socket.readyState !== WebSocket.OPEN) continue;
@@ -101,7 +209,7 @@ setTick(() => {
         if (message.type !== "welcome" || typeof message.sessionId !== "string" || typeof message.brokerInstanceId !== "string" ||
             message.sessionId !== message.payload?.sessionId || message.brokerInstanceId !== message.payload?.brokerInstanceId) throw new Error("welcome");
         identity = { sessionId: message.sessionId, brokerInstanceId: message.brokerInstanceId };
-        attempts = 0; lastSeen = Date.now(); snapshot();
+        attempts = 0; lastSeen = Date.now(); phase = "connected"; snapshot();
       } else {
         if (message.sessionId !== identity.sessionId || message.brokerInstanceId !== identity.brokerInstanceId) throw new Error("identity");
         if (message.type !== "ping" || typeof message.payload?.nonce !== "string") throw new Error("unsupported message");
@@ -110,7 +218,7 @@ setTick(() => {
     } catch { socket.close(4007, "protocol mismatch"); }
   }
   if (socket && Date.now() - lastSeen > 15000) socket.terminate();
-  if (enabled && identityReady && !socket && Date.now() >= retryAt) connect();
+  if (phase === "connect" && identityReady && !socket && Date.now() >= retryAt) connect();
 });
 
 function onHostTick(work) {
@@ -164,10 +272,11 @@ const fixtures = [
   { name: "javascript-error", language: "javascript", code: "async () => { throw new Error('fiveai expected error'); }", args: {} },
 ];
 
-// Fixed probes, console only, opt-in. No network event accepts server code and
+// Fixed probes, console only, opt-in through verifyEnabled in mcp/config.json
+// (read once at resource start). No network event accepts server code and
 // no arbitrary execute tool is exposed before the desktop scheduler exists.
 RegisterCommand("fiveai_mcp_verify", (sender, args) => {
-  if (Number(sender) !== 0 || GetConvar("fiveai_mcp_verify_enabled", "0") !== "1") return;
+  if (Number(sender) !== 0 || !verifyEnabled) return;
   if (verificationBusy) { console.log("[fivem-plugin] verification still running or unresolved"); return; }
   const target = args[0] ?? "server";
   const client = target === "server" ? null : clients.get(Number(target));
@@ -197,6 +306,7 @@ RegisterCommand("fiveai_mcp_verify", (sender, args) => {
 on("onResourceStop", name => {
   if (name !== resource) return;
   stopped = true; incoming.length = 0;
+  if (credentialTimer !== null) clearTimeout(credentialTimer);
   for (const timer of observationTimers) clearTimeout(timer);
   socket?.terminate();
 });
