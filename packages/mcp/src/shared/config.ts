@@ -95,45 +95,110 @@ function decodeTokenBytes(token: string): number {
 }
 
 /**
- * Read and validate the credential file (unified-artifact RFC §5). The file
- * must be an exclusive regular file: symlinks and hard links fail
- * explicitly instead of being read through, so a tampered credential source
- * is never masked. Every credential consumer goes through this one function
- * so the same file can never be interpreted two ways.
+ * Credential read failure kinds (unified-artifact RFC §5.2). Only "missing"
+ * may lead to first-run generation; "unreadable" (occupied, permission,
+ * transient I/O) and "invalid" (corrupt, empty, wrong form, links) must
+ * fail explicitly — an arbitrary read error is never a reason to
+ * regenerate credentials.
  */
-export function readCredentialFile(path: string): Credentials {
-  let stat;
-  try {
-    stat = lstatSync(path);
-  } catch (error) {
-    throw new Error(`cannot read credential file: ${path} (${(error as Error).message})`);
+export type CredentialErrorKind = "missing" | "unreadable" | "invalid";
+
+export class CredentialFileError extends Error {
+  readonly kind: CredentialErrorKind;
+
+  constructor(kind: CredentialErrorKind, message: string) {
+    super(message);
+    this.name = "CredentialFileError";
+    this.kind = kind;
   }
-  if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1) {
-    throw new Error(`credential file must be an owned regular file without links: ${path}`);
-  }
-  let credentialText: string;
-  try {
-    credentialText = readFileSync(path, "utf8");
-  } catch (error) {
-    throw new Error(`cannot read credential file: ${path} (${(error as Error).message})`);
+}
+
+/** Shape of node:fs Stats as consumed by credential form validation. */
+export interface CredentialFileFacts {
+  isRegularFile: boolean;
+  isSymbolicLink: boolean;
+  linkCount: number;
+}
+
+/**
+ * Validate already-read credential bytes plus the file facts (unified-artifact
+ * RFC §5). The file must be an exclusive regular file: symlinks and hard
+ * links fail explicitly instead of being read through, so a tampered
+ * credential source is never masked. Async consumers (the FiveM resource)
+ * read the file themselves and run this same validation, so one file can
+ * never be interpreted two ways. Only ever throws CredentialFileError.
+ */
+export function validateCredentialFile(path: string, facts: CredentialFileFacts, text: string): Credentials {
+  if (!facts.isRegularFile || facts.isSymbolicLink || facts.linkCount !== 1) {
+    throw new CredentialFileError(
+      "invalid",
+      `credential file must be an owned regular file without links: ${path}`,
+    );
   }
   let credentialJson: unknown;
   try {
-    credentialJson = JSON.parse(credentialText);
+    credentialJson = JSON.parse(text);
   } catch (error) {
-    throw new Error(`credential file is not valid JSON: ${(error as Error).message}`);
+    throw new CredentialFileError("invalid", `credential file is not valid JSON: ${(error as Error).message}`);
   }
   const parsedCredentials = CredentialFileSchema.safeParse(credentialJson);
   if (!parsedCredentials.success) {
-    throw new Error(`credential file failed schema validation: ${z.prettifyError(parsedCredentials.error)}`);
+    throw new CredentialFileError(
+      "invalid",
+      `credential file failed schema validation: ${z.prettifyError(parsedCredentials.error)}`,
+    );
   }
   for (const [name, token] of [
     ["entryToken", parsedCredentials.data.entryToken],
     ["bridgeToken", parsedCredentials.data.bridgeToken],
   ] as const) {
     if (decodeTokenBytes(token) < MIN_TOKEN_BYTES) {
-      throw new Error(`${name} must be base64 encoding at least ${MIN_TOKEN_BYTES} random bytes`);
+      throw new CredentialFileError(
+        "invalid",
+        `${name} must be base64 encoding at least ${MIN_TOKEN_BYTES} random bytes`,
+      );
     }
   }
   return { entryToken: parsedCredentials.data.entryToken, bridgeToken: parsedCredentials.data.bridgeToken };
+}
+
+/**
+ * Read and validate the credential file synchronously (unified-artifact
+ * RFC §5). Throws CredentialFileError so callers can distinguish a missing
+ * file from an unreadable or invalid one.
+ */
+export function readCredentialFile(path: string): Credentials {
+  let stat;
+  try {
+    stat = lstatSync(path);
+  } catch (error) {
+    throw credentialReadError(path, error, "cannot read credential file");
+  }
+  const facts: CredentialFileFacts = {
+    isRegularFile: stat.isFile(),
+    isSymbolicLink: stat.isSymbolicLink(),
+    linkCount: stat.nlink,
+  };
+  // The form is checked before any byte is read, so a directory or a
+  // linked file fails as an ownership violation, never as a read error.
+  if (!facts.isRegularFile || facts.isSymbolicLink || facts.linkCount !== 1) {
+    throw new CredentialFileError(
+      "invalid",
+      `credential file must be an owned regular file without links: ${path}`,
+    );
+  }
+  let credentialText: string;
+  try {
+    credentialText = readFileSync(path, "utf8");
+  } catch (error) {
+    throw credentialReadError(path, error, "cannot read credential file");
+  }
+  return validateCredentialFile(path, facts, credentialText);
+}
+
+function credentialReadError(path: string, error: unknown, prefix: string): CredentialFileError {
+  if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+    return new CredentialFileError("missing", `credential file does not exist: ${path}`);
+  }
+  return new CredentialFileError("unreadable", `${prefix}: ${path} (${(error as Error).message})`);
 }

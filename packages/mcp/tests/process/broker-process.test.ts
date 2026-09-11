@@ -25,6 +25,7 @@ import { RecoveryFileSchema } from "../../src/protocol/recovery.ts";
 import { parseMessage } from "../../src/protocol/envelope.ts";
 import { Broker } from "../../src/broker/server.ts";
 import { loadRuntimeConfig } from "../../src/cli/config.ts";
+import { ensureCredentials } from "../../src/cli/credentials.ts";
 import { brokerPipeNames, probeLifetimePipe, serveLifetimeDiscovery } from "../../src/broker/pipes.ts";
 import { WebSocketServer } from "ws";
 import { RecoveryStore, RecoveryWriteError } from "../../src/broker/recovery-store.ts";
@@ -116,10 +117,11 @@ async function makeScenario(name: string): Promise<Scenario> {
       serverLabel: `proc-${name}`,
     }),
   );
-  const entryToken = randomBytes(32).toString("base64");
-  const bridgeToken = randomBytes(32).toString("base64");
-  writeFileSync(credsPath, JSON.stringify({ entryToken, bridgeToken }));
-  return { name, dir, configPath, stateDir: join(dir, "state"), port, entryToken, bridgeToken };
+  // Credentials must meet the access boundary the entry verifies
+  // (unified-artifact RFC §5): generate them through the real initializer
+  // instead of a plain write with inherited permissions.
+  const credentials = await ensureCredentials(credsPath.replace(/\//g, "\\"));
+  return { name, dir, configPath, stateDir: join(dir, "state"), port, entryToken: credentials.entryToken, bridgeToken: credentials.bridgeToken };
 }
 
 /** Minimal MCP stdio client driving a spawned entry. */

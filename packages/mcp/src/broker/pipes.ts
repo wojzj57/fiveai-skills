@@ -75,10 +75,12 @@ export async function brokerPipeNames(): Promise<BrokerPipeNames> {
 }
 
 /**
- * Try to become the startup-mutex holder. Resolves with the server to keep
- * (and later close), or null when another entry already holds the pipe.
+ * Try to become the holder of a mutex-style named pipe. Resolves with the
+ * server to keep (and later close), or null when another process already
+ * holds the pipe. Used for the broker startup mutex and, under a separate
+ * name, for credential initialization (unified-artifact RFC §5.2).
  */
-export function acquireStartupPipe(pipePath: string): Promise<net.Server | null> {
+export function acquirePipeMutex(pipePath: string): Promise<net.Server | null> {
   return new Promise((resolve) => {
     const server = net.createServer((socket) => {
       // The startup pipe carries no protocol (RFC §4.2); connections exist

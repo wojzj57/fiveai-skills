@@ -4,6 +4,7 @@ import {
   linkSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   realpathSync,
   renameSync,
   rmSync,
@@ -15,9 +16,11 @@ import { basename, dirname, join } from "node:path";
 import { randomBytes } from "node:crypto";
 import {
   computeConfigDigest,
+  CredentialFileError,
   McpConfigSchema,
   readCredentialFile,
   resolveConfigPaths,
+  validateCredentialFile,
 } from "../src/shared/config.ts";
 import { loadRuntimeConfig } from "../src/cli/config.ts";
 
@@ -186,6 +189,50 @@ test("credential files are validated strictly and linked files fail explicitly",
       serverLabel: "links",
     }));
     assert.throws(() => loadRuntimeConfig(join(dir, "config.json")), /owned regular file|without links/i);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("credential read failures carry a discriminating kind (unified-artifact RFC §5.2)", () => {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "fiveai-credkind-")));
+  try {
+    // Missing is the only kind that may lead to first-run generation.
+    assert.throws(
+      () => readCredentialFile(join(dir, "absent.json")),
+      (error: unknown) => error instanceof CredentialFileError && error.kind === "missing",
+    );
+
+    // Corrupt content is invalid, never regenerated.
+    const corruptPath = join(dir, "corrupt.json");
+    writeFileSync(corruptPath, "{ not json");
+    assert.throws(
+      () => readCredentialFile(corruptPath),
+      (error: unknown) => error instanceof CredentialFileError && error.kind === "invalid" && /not valid JSON/.test(error.message),
+    );
+
+    // Form violations (non-regular, linked) are invalid at the pure
+    // validation layer async consumers share.
+    assert.throws(
+      () => validateCredentialFile(join(dir, "subdir"), { isRegularFile: false, isSymbolicLink: false, linkCount: 1 }, "{}"),
+      (error: unknown) => error instanceof CredentialFileError && error.kind === "invalid",
+    );
+    assert.throws(
+      () => validateCredentialFile(join(dir, "x.json"), { isRegularFile: true, isSymbolicLink: true, linkCount: 1 }, "{}"),
+      (error: unknown) => error instanceof CredentialFileError && error.kind === "invalid",
+    );
+    assert.throws(
+      () => validateCredentialFile(join(dir, "x.json"), { isRegularFile: true, isSymbolicLink: false, linkCount: 2 }, "{}"),
+      (error: unknown) => error instanceof CredentialFileError && error.kind === "invalid",
+    );
+
+    // Async consumers run the same validation over already-read bytes.
+    const good = join(dir, "good.json");
+    const credentials = writeCredentials(good);
+    assert.deepEqual(
+      validateCredentialFile(good, { isRegularFile: true, isSymbolicLink: false, linkCount: 1 }, readFileSync(good, "utf8")),
+      credentials,
+    );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

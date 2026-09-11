@@ -1,8 +1,9 @@
 /**
  * stdio entry (RFC §4). One entry process per AI client. It speaks MCP on
- * stdio, discovers or spawns the shared broker, and forwards tool calls
- * over the authenticated internal WebSocket. Only genuinely servable tools
- * are registered — in this slice exactly `status`.
+ * stdio, ensures first-run credentials exist (unified-artifact RFC §5),
+ * discovers or spawns the shared broker, and forwards tool calls over the
+ * authenticated internal WebSocket. Only genuinely servable tools are
+ * registered — in this slice exactly `status`.
  *
  * Diagnostics go to stderr only; stdout belongs to the MCP protocol.
  * The entry never re-sends a tool operation after a reconnect (RFC §4.3):
@@ -24,9 +25,10 @@ import { LIMITS } from "../protocol/limits.ts";
 import { parseMessage, type AnyTypedMessage, type MessageEnvelope } from "../protocol/envelope.ts";
 import { CLOSE_CODES } from "../protocol/close-codes.ts";
 import { StatusInputSchema, toolInputJsonSchema } from "../tools/schemas.ts";
-import { loadRuntimeConfig, type LoadedRuntimeConfig } from "./config.ts";
+import { loadConfig, type LoadedConfig, type LoadedRuntimeConfig } from "./config.ts";
+import { ensureCredentials } from "./credentials.ts";
 import {
-  acquireStartupPipe,
+  acquirePipeMutex,
   brokerPipeNames,
   probeLifetimePipe,
   waitForLifetimeDiscovery,
@@ -37,6 +39,8 @@ import { BUILD_ID, PACKAGE_VERSION } from "../build.ts";
 const EXIT_OK = 0;
 const EXIT_USAGE = 2;
 const EXIT_BROKER_UNAVAILABLE = 3;
+/** Credential phase failures: missing-but-uninitializable, corrupt, linked, boundary violations, busy (unified-artifact RFC §5). */
+const EXIT_CREDENTIAL_FAILURE = 4;
 const EXIT_UNEXPECTED = 1;
 
 const STATUS_TOOL_DESCRIPTION =
@@ -75,6 +79,17 @@ function brokerScriptPath(): string {
   }
   return fileURLToPath(new URL("./broker.mjs", import.meta.url));
 }
+
+/**
+ * The no-argument entry locates the config next to itself
+ * (unified-artifact RFC §4); a missing file is an incomplete installation,
+ * never silently replaced by another directory's config.
+ */
+function defaultConfigPath(): string {
+  return fileURLToPath(new URL("./config.json", import.meta.url));
+}
+
+const USAGE = "usage: node entry.mjs [--config <absolute-config-path>]";
 
 class BrokerLink {
   private ws: WebSocket | null = null;
@@ -208,7 +223,7 @@ class BrokerLink {
   }
 
   private async ensureBrokerStarted(): Promise<DiscoveryInfo | null> {
-    const startupServer = await acquireStartupPipe(this.pipes.startup);
+    const startupServer = await acquirePipeMutex(this.pipes.startup);
     if (startupServer !== null) {
       try {
         if (this.closedByUs) return null;
@@ -405,24 +420,56 @@ class BrokerLink {
 }
 
 async function main(): Promise<number> {
+  // Argument contract (unified-artifact RFC §4): the no-argument form uses
+  // the config next to the entry; --config keeps requiring an absolute
+  // Windows path; anything else — extra, missing, duplicated, or relative
+  // arguments — is a usage error.
   const argv = process.argv.slice(2);
-  const configIndex = argv.indexOf("--config");
-  if (configIndex === -1 || configIndex + 1 >= argv.length) {
-    process.stderr.write("usage: node entry.mjs --config <absolute-config-path>\n");
+  let configPath: string | null = null;
+  if (argv.length === 0) {
+    configPath = defaultConfigPath();
+    if (!existsSync(configPath)) {
+      process.stderr.write(
+        `fiveai-mcp entry: no config.json next to the entry (${configPath}); the installation is incomplete or this is a dev checkout - pass --config <absolute-config-path>\n`,
+      );
+      return EXIT_USAGE;
+    }
+  } else if (argv.length === 2 && argv[0] === "--config") {
+    const candidate = argv[1] ?? "";
+    if (!/^([A-Za-z]:[\\/]|\\\\)/.test(candidate)) {
+      process.stderr.write(`${USAGE}\n--config requires an absolute Windows path\n`);
+      return EXIT_USAGE;
+    }
+    configPath = candidate;
+  } else {
+    process.stderr.write(`${USAGE}\n`);
     return EXIT_USAGE;
   }
-  if (argv.length !== 2) {
-    process.stderr.write("usage: node entry.mjs --config <absolute-config-path>\n");
-    return EXIT_USAGE;
-  }
-  const configPath = argv[configIndex + 1] ?? "";
-  let loaded: LoadedRuntimeConfig;
+  let base: LoadedConfig;
   try {
-    loaded = loadRuntimeConfig(configPath);
+    base = loadConfig(configPath);
   } catch (error) {
     process.stderr.write(`fiveai-mcp entry: ${(error as Error).message}\n`);
     return EXIT_USAGE;
   }
+
+  // First-run credential initialization happens before any broker
+  // discovery (unified-artifact RFC §5.1).
+  let credentials;
+  try {
+    credentials = await ensureCredentials(base.credentialFilePath);
+  } catch (error) {
+    process.stderr.write(`fiveai-mcp entry: credentials: ${(error as Error).message}\n`);
+    return EXIT_CREDENTIAL_FAILURE;
+  }
+  const loaded: LoadedRuntimeConfig = {
+    configPath: base.configPath,
+    config: base.config,
+    configDigest: base.configDigest,
+    credentialFilePath: base.credentialFilePath,
+    entryToken: credentials.entryToken,
+    bridgeToken: credentials.bridgeToken,
+  };
 
   const pipes = await brokerPipeNames();
   const link = new BrokerLink(loaded, pipes);
