@@ -7,6 +7,9 @@
   "engines": {
     "node": ">=22.12.0"
   },
+  "exports": {
+    "./internal/config": "./src/shared/config.ts"
+  },
   "scripts": {
     "build": "pnpm run build:contracts && pnpm run build:entry && pnpm run build:broker",
     "build:contracts": "esbuild src/index.ts --bundle --format=esm --platform=node --outfile=dist/index.mjs",

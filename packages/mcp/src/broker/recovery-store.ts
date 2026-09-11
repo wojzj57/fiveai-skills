@@ -10,7 +10,7 @@
 import { closeSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { assertStatePaths } from "../cli/paths.ts";
+import { assertStatePaths } from "../shared/paths.ts";
 import {
   RecoveryFileSchema,
   type RecoveryFile,

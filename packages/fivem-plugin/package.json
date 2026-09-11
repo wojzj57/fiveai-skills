@@ -8,6 +8,7 @@
     "build": "node scripts/build-resource.mjs"
   },
   "dependencies": {
+    "fiveai-mcp": "workspace:*",
     "ws": "8.21.3"
   },
   "devDependencies": {

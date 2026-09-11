@@ -1,6 +1,10 @@
 import { lstatSync, realpathSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 
+// Shared path helpers (unified-artifact RFC §2): reachable through the
+// internal config subpath export, so this module must stay free of SDK,
+// broker, and CLI imports — Node built-ins only.
+
 /** Resolve explicit configuration roots, including a not-yet-created suffix. */
 export function canonicalPath(path: string): string {
   const absolute = resolve(path);
@@ -25,8 +29,8 @@ export function assertStatePaths(stateDir: string): void {
     let stat;
     try { stat = lstatSync(path); }
     catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
-      throw error;
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      continue;
     }
     if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1) {
       throw new Error(`state file ${name} must be an owned regular file without links`);

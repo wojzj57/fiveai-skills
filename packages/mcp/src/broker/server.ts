@@ -33,7 +33,7 @@ import {
   type BrokerPipeNames,
 } from "./pipes.ts";
 import { RecoveryStore, type RecoveryLoad } from "./recovery-store.ts";
-import { assertStatePaths } from "../cli/paths.ts";
+import { assertStatePaths } from "../shared/paths.ts";
 import { verifyProcessIdentity, type ProcessIdentityCheck } from "./process-identity.ts";
 
 /** Startup failures the entry maps to RFC §4.2 exit conditions. */
