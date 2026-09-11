@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "broker": { "host": "127.0.0.1", "port": 43189 },
+  "stateDir": "./state",
+  "credentialFile": "./credentials.json",
+  "clientLogDir": null,
+  "serverLabel": "local-fivem",
+  "verifyEnabled": false
+}

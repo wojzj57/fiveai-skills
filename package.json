@@ -15,11 +15,15 @@
     }
   },
   "scripts": {
-    "build": "pnpm --filter fiveai-mcp run build && pnpm --filter fivem-plugin run build",
-    "build:resource": "pnpm --filter fivem-plugin run build",
+    "build": "pnpm --filter fiveai-mcp run build && pnpm --filter fivem-plugin run build && node scripts/build-unified.mjs publish",
+    "pack": "pnpm run build && node scripts/build-unified.mjs pack",
+    "build:resource": "pnpm run build",
     "test": "node --test \"tests/**/*.test.mjs\"",
     "test:mcp": "pnpm run build:resource && pnpm --filter fiveai-mcp run test",
     "test:all": "pnpm run test && pnpm run test:mcp",
     "validate": "node scripts/validate-plugin.mjs"
+  },
+  "devDependencies": {
+    "fflate": "0.8.2"
   }
 }
