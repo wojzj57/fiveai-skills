@@ -87,11 +87,8 @@ const CredentialFileSchema = z.strictObject({
 const MIN_TOKEN_BYTES = 32;
 
 function decodeTokenBytes(token: string): number {
-  try {
-    return Buffer.from(token, "base64").length;
-  } catch {
-    return -1;
-  }
+  const decoded = Buffer.from(token, "base64");
+  return decoded.toString("base64") === token ? decoded.length : -1;
 }
 
 /**

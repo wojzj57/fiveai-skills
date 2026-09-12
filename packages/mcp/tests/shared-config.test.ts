@@ -238,6 +238,45 @@ test("credential read failures carry a discriminating kind (unified-artifact RFC
   }
 });
 
+test("credential tokens require canonical standard Base64", () => {
+  const good = Buffer.alloc(32, 255).toString("base64");
+  const facts = { isRegularFile: true, isSymbolicLink: false, linkCount: 1 };
+  const invalid = [
+    "A".repeat(43) + "!", good + "!", " " + good,
+    good.replaceAll("/", "_"), good.slice(0, -1),
+    Buffer.alloc(31).toString("base64"),
+  ];
+  for (const token of invalid) {
+    assert.throws(() => validateCredentialFile("fixture.json", facts,
+      JSON.stringify({ entryToken: token, bridgeToken: good })),
+    (error: unknown) => error instanceof CredentialFileError && error.kind === "invalid");
+  }
+  assert.equal(validateCredentialFile("fixture.json", facts,
+    JSON.stringify({ entryToken: good, bridgeToken: good })).entryToken, good);
+});
+
+test("bridgeToken rejects noncanonical encodings and longer standard tokens pass", () => {
+  const good = Buffer.alloc(32, 255).toString("base64");
+  const facts = { isRegularFile: true, isSymbolicLink: false, linkCount: 1 };
+  const invalid = [
+    "A".repeat(43) + "!", good + "!", " " + good,
+    good.replaceAll("/", "_"), good.slice(0, -1),
+    Buffer.alloc(31).toString("base64"),
+  ];
+  for (const token of invalid) {
+    assert.throws(() => validateCredentialFile("fixture.json", facts,
+      JSON.stringify({ entryToken: good, bridgeToken: token })),
+    (error: unknown) => error instanceof CredentialFileError && error.kind === "invalid");
+  }
+  // 33-byte (44 chars, unpadded tail group) and 64-byte (88 chars, "=="
+  // padding) tokens are canonical standard Base64 well above the minimum.
+  for (const bytes of [33, 64]) {
+    const token = Buffer.alloc(bytes, 255).toString("base64");
+    assert.equal(validateCredentialFile("fixture.json", facts,
+      JSON.stringify({ entryToken: token, bridgeToken: token })).bridgeToken, token);
+  }
+});
+
 test("resolveConfigPaths joins relatives, passes absolutes through, and requires an absolute base", () => {
   const config = McpConfigSchema.parse({ version: 1, broker: { host: "127.0.0.1" }, serverLabel: "resolve" });
   const resolved = resolveConfigPaths(config, "D:\\install\\fiveai-mcp\\mcp");
