@@ -24,6 +24,7 @@ import { LIMITS } from "../../src/protocol/limits.ts";
 import { RecoveryFileSchema } from "../../src/protocol/recovery.ts";
 import { parseMessage } from "../../src/protocol/envelope.ts";
 import { Broker } from "../../src/broker/server.ts";
+import { BUILD_ID } from "../../src/build.ts";
 import { loadRuntimeConfig } from "../../src/cli/config.ts";
 import { ensureCredentials } from "../../src/cli/credentials.ts";
 import { brokerPipeNames, probeLifetimePipe, serveLifetimeDiscovery } from "../../src/broker/pipes.ts";
@@ -252,6 +253,121 @@ async function awaitStatusOk(mcp: McpClient, timeoutMs = 30_000): Promise<Record
     }
     await new Promise((resolve) => setTimeout(resolve, 300));
   }
+}
+
+/**
+ * Poll the status tool until its clients array satisfies `match` (every
+ * 50ms, 5s cap). The fixture's ready line only proves the welcome arrived —
+ * the snapshot is consumed asynchronously, so tests must poll.
+ */
+async function pollStatusClients(
+  mcp: McpClient,
+  match: (clients: Array<Record<string, unknown>>) => boolean,
+  label: string,
+  timeoutMs = 5_000,
+): Promise<Array<Record<string, unknown>>> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const status = await mcp.callStatus();
+    assert.equal(status.isError, false, `${label}: status call failed`);
+    const clients = (status.structuredContent.clients ?? []) as Array<Record<string, unknown>>;
+    if (match(clients)) return clients;
+    if (Date.now() >= deadline) {
+      assert.fail(`${label}: last observed clients were ${JSON.stringify(clients)}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+}
+
+/** Wait until the status tool reports no bridge session (slot freed). */
+async function waitBridgeNull(mcp: McpClient, label: string, timeoutMs = 5_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const status = await mcp.callStatus();
+    assert.equal(status.isError, false, `${label}: status call failed`);
+    if (status.structuredContent.bridge === null) return;
+    if (Date.now() >= deadline) assert.fail(`${label}: bridge slot still occupied`);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+}
+
+/**
+ * A raw bridge WebSocket under the test's control: performs the real
+ * hello/welcome handshake and answers heartbeat pings, but leaves sending
+ * clients.snapshot messages to the caller.
+ */
+interface RawBridge {
+  ws: WebSocket;
+  brokerInstanceId: string;
+  sessionId: string;
+  bridgeEpoch: string;
+}
+
+async function openRawBridge(scenario: Scenario, bridgeEpoch = randomUUID()): Promise<RawBridge> {
+  const ws = new WebSocket(`ws://127.0.0.1:${scenario.port}/internal/v1/bridge`, {
+    headers: { Authorization: `Bearer ${scenario.bridgeToken}` },
+  });
+  let bound: { brokerInstanceId: string; sessionId: string } | null = null;
+  const identity = await new Promise<{ brokerInstanceId: string; sessionId: string }>((resolve, reject) => {
+    const timer = setTimeout(() => { ws.terminate(); reject(new Error("raw bridge welcome timeout")); }, 5000);
+    ws.on("error", reject);
+    ws.on("open", () => ws.send(JSON.stringify({
+      v: 1, id: randomUUID(), type: "hello",
+      payload: {
+        role: "bridge", internalProtocol: 1, buildId: BUILD_ID, adapterDigest: "raw-ws-test",
+        environment: {
+          bridgeEpoch,
+          serverPid: process.pid,
+          serverStartedAt: new Date().toISOString(),
+          serverIdentityVerifiable: true,
+        },
+      },
+    })));
+    ws.on("message", data => {
+      const message = JSON.parse(String(data)) as {
+        type?: string;
+        payload?: { brokerInstanceId?: string; sessionId?: string; nonce?: string };
+      };
+      if (message.type === "welcome") {
+        clearTimeout(timer);
+        const welcomeIdentity = {
+          brokerInstanceId: message.payload!.brokerInstanceId!,
+          sessionId: message.payload!.sessionId!,
+        };
+        bound = welcomeIdentity;
+        resolve(welcomeIdentity);
+        return;
+      }
+      // Pings only arrive after registration, so `bound` is set by then.
+      if (message.type === "ping" && message.payload?.nonce !== undefined && bound !== null) {
+        ws.send(JSON.stringify({
+          v: 1, id: randomUUID(), ...bound,
+          type: "pong", payload: { nonce: message.payload.nonce },
+        }));
+      }
+    });
+  });
+  return { ws, bridgeEpoch, ...identity };
+}
+
+/**
+ * Send a clients.snapshot on a raw bridge. `envelope` intentionally
+ * overrides identity fields for violation tests; payloads must already
+ * satisfy the schema or the connection is closed as a protocol error.
+ */
+function sendSnapshot(
+  bridge: RawBridge,
+  payload: { bridgeEpoch: string; clients: Array<Record<string, unknown>> },
+  envelope: { brokerInstanceId?: string; sessionId?: string } = {},
+): void {
+  bridge.ws.send(JSON.stringify({
+    v: 1, id: randomUUID(),
+    brokerInstanceId: bridge.brokerInstanceId,
+    sessionId: bridge.sessionId,
+    ...envelope,
+    type: "clients.snapshot",
+    payload,
+  }));
 }
 
 function killTree(child: ChildProcess): void {
@@ -590,6 +706,257 @@ test("a fake bridge handshakes, surfaces in status, and blocks a second bridge",
   } finally {
     if (bridge !== null) killTree(bridge);
     if (secondBridge !== null) killTree(secondBridge);
+    killTree(entry.child);
+    await killBroker(scenario);
+    rmSync(scenario.dir, { recursive: true, force: true });
+  }
+});
+
+test("client snapshots surface in status and the clientId filter only affects display", async () => {
+  const scenario = await makeScenario("clients-status");
+  const entry = spawnEntry(scenario);
+  let bridge: ChildProcess | null = null;
+  try {
+    await entry.mcp.initialize();
+    await awaitStatusOk(entry.mcp);
+
+    const client12 = {
+      serverId: 12, clientEpoch: randomUUID(),
+      capabilities: ["lua", "javascript"], logMarker: "marker-12",
+    };
+    const client13 = {
+      serverId: 13, clientEpoch: randomUUID(),
+      capabilities: ["lua", "javascript"], logMarker: "marker-13",
+    };
+    bridge = spawn(process.execPath, [
+      FAKE_BRIDGE,
+      "--url", `ws://127.0.0.1:${scenario.port}/internal/v1/bridge`,
+      "--token", scenario.bridgeToken,
+      "--clients-json", JSON.stringify([client12, client13]),
+    ], { stdio: ["ignore", "pipe", "pipe"] });
+    const events = await readBridgeStdout(bridge);
+    await waitUntil(() => events.some((event) => event.event === "ready"), 10_000, "fake bridge ready");
+
+    // The ready line does not mean the broker consumed the snapshot yet.
+    const surfaced = await pollStatusClients(
+      entry.mcp,
+      (clients) => clients.length === 2,
+      "both client bindings surface in status",
+    );
+    assert.deepEqual(surfaced, [client12, client13]);
+
+    const filtered = await entry.mcp.callStatus({ clientId: 12 });
+    assert.equal(filtered.isError, false);
+    assert.deepEqual(
+      (filtered.structuredContent.clients as Array<{ serverId: number }>).map(c => c.serverId),
+      [12],
+    );
+    const absent = await entry.mcp.callStatus({ clientId: 99 });
+    assert.deepEqual(absent.structuredContent.clients, []);
+    const unfiltered = await entry.mcp.callStatus();
+    assert.deepEqual(
+      (unfiltered.structuredContent.clients as Array<{ serverId: number }>).map(c => c.serverId),
+      [12, 13],
+    );
+  } finally {
+    if (bridge !== null) killTree(bridge);
+    killTree(entry.child);
+    await killBroker(scenario);
+    rmSync(scenario.dir, { recursive: true, force: true });
+  }
+});
+
+test("client snapshots: a bridge replaces or clears its own bindings in place", async () => {
+  const scenario = await makeScenario("clients-replace");
+  const entry = spawnEntry(scenario);
+  let bridge: RawBridge | null = null;
+  try {
+    await entry.mcp.initialize();
+    await awaitStatusOk(entry.mcp);
+    bridge = await openRawBridge(scenario);
+
+    const first = [
+      { serverId: 12, clientEpoch: randomUUID(), capabilities: ["lua"], logMarker: "m-12" },
+      { serverId: 13, clientEpoch: randomUUID(), capabilities: ["lua"], logMarker: "m-13" },
+    ];
+    sendSnapshot(bridge, { bridgeEpoch: bridge.bridgeEpoch, clients: first });
+    const surfacedFirst = await pollStatusClients(
+      entry.mcp,
+      clients => clients.length === 2,
+      "first snapshot surfaces",
+    );
+    assert.deepEqual(surfacedFirst, first);
+
+    // A snapshot is a full replacement: serverId 12 rebinds to a new
+    // clientEpoch and 13 disappears without any explicit tombstone.
+    const second = [
+      { serverId: 12, clientEpoch: randomUUID(), capabilities: ["lua", "javascript"], logMarker: "m-12b" },
+    ];
+    sendSnapshot(bridge, { bridgeEpoch: bridge.bridgeEpoch, clients: second });
+    const surfacedSecond = await pollStatusClients(
+      entry.mcp,
+      clients => clients.length === 1 && clients[0]!.clientEpoch === second[0]!.clientEpoch,
+      "replacement snapshot surfaces",
+    );
+    assert.deepEqual(surfacedSecond, second);
+
+    // An empty snapshot clears the list.
+    sendSnapshot(bridge, { bridgeEpoch: bridge.bridgeEpoch, clients: [] });
+    await pollStatusClients(entry.mcp, clients => clients.length === 0, "empty snapshot clears the list");
+  } finally {
+    if (bridge !== null) bridge.ws.terminate();
+    killTree(entry.child);
+    await killBroker(scenario);
+    rmSync(scenario.dir, { recursive: true, force: true });
+  }
+});
+
+test("client snapshots: epoch, duplicate-binding, and identity violations close 4007", async () => {
+  const scenario = await makeScenario("clients-violations");
+  const entry = spawnEntry(scenario);
+  const sockets: WebSocket[] = [];
+  try {
+    await entry.mcp.initialize();
+    await awaitStatusOk(entry.mcp);
+
+    // A snapshot whose bridgeEpoch is not the one this session's hello carried.
+    {
+      const bridge = await openRawBridge(scenario);
+      sockets.push(bridge.ws);
+      const closed = expectClose(bridge.ws);
+      sendSnapshot(bridge, {
+        bridgeEpoch: randomUUID(),
+        clients: [{ serverId: 12, clientEpoch: randomUUID(), capabilities: ["lua"], logMarker: "m-12" }],
+      });
+      const close = await closed;
+      assert.equal(close.code, 4007);
+      assert.equal(close.reason, "PROTOCOL_ERROR: invalid client snapshot epoch");
+    }
+    await waitBridgeNull(entry.mcp, "bridge slot frees after epoch violation");
+
+    // Two bindings for the same serverId inside one snapshot.
+    {
+      const bridge = await openRawBridge(scenario);
+      sockets.push(bridge.ws);
+      const closed = expectClose(bridge.ws);
+      sendSnapshot(bridge, {
+        bridgeEpoch: bridge.bridgeEpoch,
+        clients: [
+          { serverId: 12, clientEpoch: randomUUID(), capabilities: ["lua"], logMarker: "m-12a" },
+          { serverId: 12, clientEpoch: randomUUID(), capabilities: ["lua"], logMarker: "m-12b" },
+        ],
+      });
+      const close = await closed;
+      assert.equal(close.code, 4007);
+      assert.equal(close.reason, "PROTOCOL_ERROR: duplicate client binding");
+    }
+    await waitBridgeNull(entry.mcp, "bridge slot frees after duplicate binding");
+
+    // A snapshot whose envelope carries a foreign sessionId is rejected by
+    // the connection-identity check before any cache write.
+    {
+      const bridge = await openRawBridge(scenario);
+      sockets.push(bridge.ws);
+      const closed = expectClose(bridge.ws);
+      sendSnapshot(
+        bridge,
+        { bridgeEpoch: bridge.bridgeEpoch, clients: [] },
+        { sessionId: randomUUID() },
+      );
+      const close = await closed;
+      assert.equal(close.code, 4007);
+      assert.equal(close.reason, "PROTOCOL_ERROR: connection identity or role mismatch");
+    }
+    // No violating snapshot ever reached the cache.
+    const status = await entry.mcp.callStatus();
+    assert.equal(status.isError, false);
+    assert.deepEqual(status.structuredContent.clients, []);
+  } finally {
+    for (const ws of sockets) ws.terminate();
+    killTree(entry.child);
+    await killBroker(scenario);
+    rmSync(scenario.dir, { recursive: true, force: true });
+  }
+});
+
+test("client snapshots: disconnect empties the list and a second bridge cannot overwrite the first", async () => {
+  const scenario = await makeScenario("clients-lifecycle");
+  const entry = spawnEntry(scenario);
+  let first: ChildProcess | null = null;
+  let second: ChildProcess | null = null;
+  let third: RawBridge | null = null;
+  try {
+    await entry.mcp.initialize();
+    await awaitStatusOk(entry.mcp);
+
+    const client12 = { serverId: 12, clientEpoch: randomUUID(), capabilities: ["lua"], logMarker: "m-12" };
+    const client13 = { serverId: 13, clientEpoch: randomUUID(), capabilities: ["lua"], logMarker: "m-13" };
+    first = spawn(process.execPath, [
+      FAKE_BRIDGE,
+      "--url", `ws://127.0.0.1:${scenario.port}/internal/v1/bridge`,
+      "--token", scenario.bridgeToken,
+      "--clients-json", JSON.stringify([client12, client13]),
+    ], { stdio: ["ignore", "pipe", "pipe"] });
+    const firstEvents = await readBridgeStdout(first);
+    await waitUntil(() => firstEvents.some((event) => event.event === "ready"), 10_000, "first bridge ready");
+    const surfaced = await pollStatusClients(
+      entry.mcp,
+      clients => clients.length === 2,
+      "first bridge clients surface",
+    );
+    assert.deepEqual(surfaced, [client12, client13]);
+
+    // A second bridge cannot displace the first, and its differing snapshot
+    // never reaches the status view.
+    second = spawn(process.execPath, [
+      FAKE_BRIDGE,
+      "--url", `ws://127.0.0.1:${scenario.port}/internal/v1/bridge`,
+      "--token", scenario.bridgeToken,
+      "--clients-json", JSON.stringify([
+        { serverId: 99, clientEpoch: randomUUID(), capabilities: ["lua"], logMarker: "m-99" },
+      ]),
+    ], { stdio: ["ignore", "pipe", "pipe"] });
+    const secondEvents = await readBridgeStdout(second);
+    await waitUntil(
+      () => secondEvents.some((event) => event.event === "close"),
+      10_000,
+      "second bridge rejected",
+    );
+    const secondClose = secondEvents.find((event) => event.event === "close") as { code: number } | undefined;
+    assert.equal(secondClose!.code, 4004, "BRIDGE_ALREADY_CONNECTED");
+    const stillFirst = await entry.mcp.callStatus();
+    assert.equal(stillFirst.isError, false);
+    assert.deepEqual(
+      (stillFirst.structuredContent.clients as Array<{ serverId: number }>).map(c => c.serverId),
+      [12, 13],
+    );
+
+    // Disconnecting the current bridge empties the client list; before any
+    // new bridge connects, status reports no clients.
+    killTree(first);
+    first = null;
+    await waitBridgeNull(entry.mcp, "bridge slot cleared after disconnect");
+    const emptied = await entry.mcp.callStatus();
+    assert.deepEqual(emptied.structuredContent.clients, []);
+
+    // A fresh bridge session inherits nothing from the previous session's
+    // cache and only its own snapshot ever surfaces.
+    third = await openRawBridge(scenario);
+    const fresh = await entry.mcp.callStatus();
+    assert.equal(fresh.isError, false);
+    assert.deepEqual(fresh.structuredContent.clients, [], "a fresh bridge session inherits no client bindings");
+    const client40 = { serverId: 40, clientEpoch: randomUUID(), capabilities: ["javascript"], logMarker: "m-40" };
+    sendSnapshot(third, { bridgeEpoch: third.bridgeEpoch, clients: [client40] });
+    const resurfaced = await pollStatusClients(
+      entry.mcp,
+      clients => clients.length === 1,
+      "new bridge client surfaces",
+    );
+    assert.deepEqual(resurfaced, [client40]);
+  } finally {
+    if (first !== null) killTree(first);
+    if (second !== null) killTree(second);
+    if (third !== null) third.ws.terminate();
     killTree(entry.child);
     await killBroker(scenario);
     rmSync(scenario.dir, { recursive: true, force: true });

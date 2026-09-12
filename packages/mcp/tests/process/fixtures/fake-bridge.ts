@@ -8,7 +8,11 @@
  *   {"event":"close","code":...,"reason":...}
  *
  * Flags: --url <ws-url> --token <bridgeToken> [--no-pong] [--epoch <id>]
- *        [--build-id <id>]
+ *        [--build-id <id>] [--clients-json <JSON array>]
+ *
+ * --clients-json sends one clients.snapshot right after the welcome, bound
+ * to this connection's envelope identity and bridgeEpoch. Test-only
+ * surface; it is not a public tool or config option.
  */
 
 import { randomUUID } from "node:crypto";
@@ -71,6 +75,14 @@ ws.on("message", (data: unknown) => {
     const payload = message.payload as { brokerInstanceId: string; sessionId: string };
     brokerInstanceId = payload.brokerInstanceId;
     sessionId = payload.sessionId;
+    const clientsJson = argument("--clients-json");
+    if (clientsJson !== undefined) {
+      ws.send(JSON.stringify({
+        v: 1, id: randomUUID(), brokerInstanceId, sessionId,
+        type: "clients.snapshot",
+        payload: { bridgeEpoch, clients: JSON.parse(clientsJson) },
+      }));
+    }
     console.log(JSON.stringify({ event: "ready", brokerInstanceId, sessionId, bridgeEpoch }));
     return;
   }

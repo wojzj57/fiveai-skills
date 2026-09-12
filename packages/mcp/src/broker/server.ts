@@ -14,9 +14,10 @@ import { join } from "node:path";
 import fastify, { type FastifyInstance } from "fastify";
 import websocket from "@fastify/websocket";
 import type { WebSocket } from "ws";
+import type { z } from "zod";
 import { LIMITS } from "../protocol/limits.ts";
 import { parseMessage, type AnyTypedMessage, type MessageEnvelope } from "../protocol/envelope.ts";
-import type { Hello } from "../protocol/messages.ts";
+import { ClientBindingSchema, type Hello } from "../protocol/messages.ts";
 import { RuntimeFileSchema, type DiscoveryInfo } from "../protocol/runtime.ts";
 import { CLOSE_CODES, CLOSE_REASONS } from "../protocol/close-codes.ts";
 import { StatusInputSchema } from "../tools/schemas.ts";
@@ -62,6 +63,12 @@ interface Session {
   heartbeatTimer: NodeJS.Timeout;
   registered: boolean;
   identityCheck: ProcessIdentityCheck;
+  /**
+   * Latest client bindings self-reported by this bridge session via
+   * clients.snapshot (generation-bound to the session's hello bridgeEpoch).
+   * Bridge sessions replace this wholesale; entries keep it empty.
+   */
+  clients: Array<z.infer<typeof ClientBindingSchema>>;
 }
 
 function envelopeOf(
@@ -298,6 +305,7 @@ export class Broker {
       heartbeatTimer: setInterval(() => this.heartbeatTick(session), LIMITS.heartbeat.intervalMs),
       registered: false,
       identityCheck: { verified: false, reason: "verification pending" },
+      clients: [],
     };
     this.connections.add(session);
     socket.on("message", (data: unknown) => {
@@ -365,9 +373,22 @@ export class Broker {
         this.handleControlRequest(session, message.payload.requestId, message.payload.tool, message.payload.arguments);
         return;
       case "logs.batch":
-      case "clients.snapshot":
-        // Valid bridge telemetry pushes; this build has no consumer yet.
+        // Valid bridge telemetry push; this build has no consumer yet.
         return;
+      case "clients.snapshot": {
+        if (session !== this.bridgeSession || session.hello?.role !== "bridge" ||
+            message.payload.bridgeEpoch !== session.hello.environment.bridgeEpoch) {
+          closeSocket(session.socket, CLOSE_CODES.PROTOCOL_ERROR, "PROTOCOL_ERROR: invalid client snapshot epoch");
+          return;
+        }
+        const ids = message.payload.clients.map(client => client.serverId);
+        if (new Set(ids).size !== ids.length) {
+          closeSocket(session.socket, CLOSE_CODES.PROTOCOL_ERROR, "PROTOCOL_ERROR: duplicate client binding");
+          return;
+        }
+        session.clients = message.payload.clients;
+        return;
+      }
       case "task.submit":
       case "approval.result":
         closeSocket(
@@ -489,9 +510,10 @@ export class Broker {
               adapterCompatibility: { verified: false, reason: "adapter manifest not implemented" },
               connectedAt: bridge.connectedAt,
             },
-      // Client bindings arrive with the real FiveM bridge (later slice);
-      // the optional clientId filter is applied for contract fidelity.
-      clients: [],
+      // Self-reported bindings from the current bridge session's latest
+      // snapshot (nothing here is locally verified); the optional clientId
+      // filter is display-only.
+      clients: (bridge?.clients ?? []).filter(client => clientId === undefined || client.serverId === clientId),
       queue: {
         state: dispatchBlockedReason === null ? "idle" : "blocked",
         queued: 0,
