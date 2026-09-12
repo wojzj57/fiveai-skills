@@ -13,6 +13,7 @@ import { WebSocketServer } from "ws";
 import { parseMessage, type AnyTypedMessage } from "../src/protocol/envelope.ts";
 import { ClientsSnapshotSchema } from "../src/protocol/messages.ts";
 import { BoundedExecutionValueSchema } from "../src/protocol/wire-value.ts";
+import { BUILD_ID } from "../src/build.ts";
 
 const resource = fileURLToPath(new URL("../../fivem-plugin/artifact/fivem-plugin/", import.meta.url));
 
@@ -273,6 +274,10 @@ test("server bundle bridges from mcp/config.json and credentials under a dynamic
       await harness.advance(1);
     }
     assert.ok(broker.frames.some(f => f.type === "hello"), "bridge says hello from the file-based config");
+    // The hello carries the embedded build identity (F3): the resource
+    // bundle shares one identity with the entry/broker of the same build.
+    const hello = broker.frames.find(f => f.type === "hello")!;
+    assert.equal((hello.payload as { buildId: string }).buildId, BUILD_ID);
     assert.ok(broker.frames.some(f => f.type === "clients.snapshot"), "bridge sends a snapshot");
     assert.deepEqual(
       [...harness.network.keys()].sort(),

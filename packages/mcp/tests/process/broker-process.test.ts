@@ -12,14 +12,18 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
-import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { randomBytes, randomUUID } from "node:crypto";
 import net from "node:net";
+import vm from "node:vm";
+import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import WebSocket from "ws";
+import { unzipSync } from "fflate";
+import { createUnifiedFixture } from "../../../../tests/helpers/unified-fixture.mjs";
 import { LIMITS } from "../../src/protocol/limits.ts";
 import { RecoveryFileSchema } from "../../src/protocol/recovery.ts";
 import { parseMessage } from "../../src/protocol/envelope.ts";
@@ -32,6 +36,7 @@ import { WebSocketServer } from "ws";
 import { RecoveryStore, RecoveryWriteError } from "../../src/broker/recovery-store.ts";
 
 const MCP_ROOT = fileURLToPath(new URL("../../", import.meta.url));
+const REPO_ROOT = fileURLToPath(new URL("../../../../", import.meta.url));
 const ENTRY_ARTIFACT = join(MCP_ROOT, "dist", "entry.mjs");
 const BROKER_ARTIFACT = join(MCP_ROOT, "dist", "broker.mjs");
 const FAKE_BRIDGE = join(MCP_ROOT, "tests", "process", "fixtures", "fake-bridge.ts");
@@ -58,7 +63,7 @@ test("pending dispatch intent blocks status and wrong bound UUIDs never reach co
       const ws = new WebSocket(`ws://127.0.0.1:${scenario.port}/internal/v1/entry`, { headers: { Authorization: `Bearer ${scenario.entryToken}` } });
       const welcome = await new Promise<{ brokerInstanceId: string; sessionId: string }>((resolve, reject) => {
         const timer = setTimeout(() => { ws.terminate(); reject(new Error("welcome timeout")); }, 5000);
-        ws.on("open", () => ws.send(JSON.stringify({ v: 1, id: randomUUID(), type: "hello", payload: { role: "entry", internalProtocol: 1, buildId: "fiveai-mcp/0.1.0", configDigest: status.configDigest } })));
+        ws.on("open", () => ws.send(JSON.stringify({ v: 1, id: randomUUID(), type: "hello", payload: { role: "entry", internalProtocol: 1, buildId: BUILD_ID, configDigest: status.configDigest } })));
         ws.once("message", data => { clearTimeout(timer); resolve(JSON.parse(String(data)).payload); });
         ws.on("error", reject);
       });
@@ -68,7 +73,7 @@ test("pending dispatch intent blocks status and wrong bound UUIDs never reach co
       const invalidMessage = { v: 1, id: randomUUID(), brokerInstanceId: welcome.brokerInstanceId, sessionId: welcome.sessionId,
         ...(badField === "sessionId" || badField === "brokerInstanceId" ? { [badField]: randomUUID() } : {}),
         type: badField === "role" ? "clients.snapshot" : badField === "hello" ? "hello" : "control.request",
-        payload: badField === "role" ? { bridgeEpoch: randomUUID(), clients: [] } : badField === "hello" ? { role: "entry", internalProtocol: 1, buildId: "fiveai-mcp/0.1.0", configDigest: status.configDigest } : { requestId: randomUUID(), tool: "status", arguments: {} },
+        payload: badField === "role" ? { bridgeEpoch: randomUUID(), clients: [] } : badField === "hello" ? { role: "entry", internalProtocol: 1, buildId: BUILD_ID, configDigest: status.configDigest } : { requestId: randomUUID(), tool: "status", arguments: {} },
       };
       parseMessage(invalidMessage); // Valid schema; rejection must be connection-bound.
       ws.send(JSON.stringify(invalidMessage));
@@ -206,7 +211,7 @@ interface RuntimeRecord {
   configDigest: string;
 }
 
-function readRuntime(scenario: Scenario): RuntimeRecord | null {
+function readRuntime(scenario: Pick<Scenario, "stateDir">): RuntimeRecord | null {
   const path = join(scenario.stateDir, "runtime.json");
   if (!existsSync(path)) return null;
   return JSON.parse(readFileSync(path, "utf8")) as RuntimeRecord;
@@ -378,7 +383,7 @@ function killTree(child: ChildProcess): void {
   }
 }
 
-async function killBroker(scenario: Scenario): Promise<void> {
+async function killBroker(scenario: Pick<Scenario, "stateDir">): Promise<void> {
   // A broker may still be mid-startup: wait for runtime.json before
   // deciding there is nothing to kill, so no detached broker leaks past
   // the scenario and poisons the shared lifetime pipe.
@@ -467,7 +472,7 @@ test("stdio chain: initialize, tools/list, and a real tools/call status (RFC §1
 
     const status = await awaitStatusOk(mcp);
     assert.equal(typeof status.brokerInstanceId, "string");
-    assert.equal(status.buildId, "fiveai-mcp/0.1.0");
+    assert.equal(status.buildId, BUILD_ID);
     assert.equal(status.internalProtocol, 1);
     assert.equal(status.shuttingDown, false);
     assert.equal(status.connectedEntries, 1);
@@ -1239,7 +1244,7 @@ test("startup recovery write failure stays observable and dispatch-blocked over 
     const status = await new Promise<Record<string, unknown>>((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error("status timeout")), 5000);
       active.on("error", reject);
-      active.on("open", () => active.send(JSON.stringify({ v: 1, id: randomUUID(), type: "hello", payload: { role: "entry", internalProtocol: 1, buildId: "fiveai-mcp/0.1.0", configDigest: loaded.configDigest } })));
+      active.on("open", () => active.send(JSON.stringify({ v: 1, id: randomUUID(), type: "hello", payload: { role: "entry", internalProtocol: 1, buildId: BUILD_ID, configDigest: loaded.configDigest } })));
       active.on("message", data => {
         const message = parseMessage(JSON.parse(String(data)));
         if (message.type === "welcome") active.send(JSON.stringify({ v: 1, id: randomUUID(), brokerInstanceId: message.payload.brokerInstanceId, sessionId: message.payload.sessionId, type: "control.request", payload: { requestId: randomUUID(), tool: "status", arguments: {} } }));
@@ -1299,5 +1304,321 @@ test("a new entry waits through the stopping window and starts only after the ol
     // The in-process broker's runtime PID is this test runner: never kill it.
     if (readRuntime(scenario)?.pid !== process.pid) await killBroker(scenario);
     rmSync(scenario.dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * A/B mixed-artifact regression (F3): two REAL unified builds that differ
+ * by exactly one resource source line must reject each other at handshake
+ * with BUILD_MISMATCH (4003). Build A and B inside a throwaway fixture
+ * workspace, unpack both ZIPs into space-containing directories without
+ * node_modules, and drive the shipped server bundles through the same
+ * VM-host pattern resource.test.ts uses. The rejected hello travels
+ * through a recording TCP relay (the Host header is rewritten to the
+ * pinned broker address; everything else passes through untouched) so the
+ * real broker's close frame and the foreign hello are both captured on
+ * the wire.
+ */
+
+interface BundleHarness {
+  advance: (rounds?: number) => Promise<void>;
+  stop: () => void;
+}
+
+/** Run a built server bundle in an FXServer-like VM context (resource.test.ts pattern). */
+function runServerBundle(bundlePath: string, resourceDir: string): BundleHarness {
+  const realRequire = createRequire(import.meta.url);
+  const timers = new Map<number, () => void>();
+  let timerSeq = 0;
+  const ticks: Array<() => void> = [];
+  const local = new Map<string, (...args: unknown[]) => void>();
+  // A proxy keeps every real process member available to the bundle while
+  // reporting a non-Windows platform so the optional OS identity lookup
+  // stays out of the way (the bundle connects with identityReady = true).
+  const fakeProcess = new Proxy(process, {
+    get(target, prop) {
+      if (prop === "platform") return "linux";
+      const value = Reflect.get(target, prop, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+    has(target, prop) {
+      return prop === "platform" ? true : Reflect.has(target, prop);
+    },
+  });
+  const context = vm.createContext({
+    require: realRequire, module: { exports: {} }, exports: {}, Buffer, process: fakeProcess,
+    console: { log() {}, error() {} },
+    setTimeout: (fn: () => void) => { timers.set(++timerSeq, fn); return timerSeq; },
+    clearTimeout: (id: number) => { timers.delete(id); },
+    setInterval: () => 1, clearInterval() {}, setTick: (fn: () => void) => ticks.push(fn),
+    GetCurrentResourceName: () => "fiveai-mcp",
+    GetResourcePath: () => resourceDir,
+    GetConvar: (name: string) => { throw new Error(`unexpected convar read: ${name}`); },
+    GetPlayerName: () => null,
+    onNet: (name: string, fn: (...args: unknown[]) => void) => local.set(name, fn),
+    on: (name: string, fn: (...args: unknown[]) => void) => local.set(name, fn),
+    RegisterCommand() {},
+    emit() {}, emitNet() {}, source: 0,
+  });
+  vm.runInContext(readFileSync(bundlePath, "utf8"), context);
+  const fireTimers = () => {
+    const pending = [...timers.values()];
+    timers.clear();
+    for (const fn of pending) fn();
+  };
+  return {
+    advance: async (rounds = 3) => {
+      fireTimers();
+      for (let i = 0; i < rounds; i++) {
+        for (const tick of ticks) tick();
+        await new Promise(resolve => setTimeout(resolve, 15));
+      }
+    },
+    stop: () => local.get("onResourceStop")?.("fiveai-mcp"),
+  };
+}
+
+/** Unpack a unified ZIP into a destination directory (space-containing paths allowed). */
+function unzipInto(zipPath: string, destination: string): void {
+  for (const [name, bytes] of Object.entries(unzipSync(new Uint8Array(readFileSync(zipPath))))) {
+    const target = join(destination, name);
+    mkdirSync(dirname(target), { recursive: true });
+    writeFileSync(target, bytes);
+  }
+}
+
+/** Minimal mcp/config.json for an unpacked unified install. */
+function writeUnpackedConfig(unpackedRoot: string, port: number, serverLabel: string): void {
+  writeFileSync(join(unpackedRoot, "fiveai-mcp", "mcp", "config.json"), JSON.stringify({
+    version: 1,
+    broker: { host: "127.0.0.1", port },
+    serverLabel,
+    verifyEnabled: false,
+  }));
+}
+
+/** Spawn the unpacked unified entry (no arguments: it reads the config next to itself). */
+function spawnUnpackedEntry(unpackedRoot: string): { child: ChildProcess; mcp: McpClient } {
+  const child = spawn(process.execPath, [join(unpackedRoot, "fiveai-mcp", "mcp", "entry.mjs")], {
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  return { child, mcp: new McpClient(child) };
+}
+
+/** Drive a bundle harness until the broker status shows the connected bridge. */
+async function driveBundleBridge(harness: BundleHarness, mcp: McpClient, label: string): Promise<{ buildId: string }> {
+  const deadline = Date.now() + 15_000;
+  for (;;) {
+    for (let i = 0; i < 3; i++) await harness.advance(1);
+    const result = await mcp.callStatus();
+    assert.equal(result.isError, false, `${label}: status call failed`);
+    const bridge = result.structuredContent.bridge as { buildId: string } | null | undefined;
+    if (bridge !== null && bridge !== undefined) return bridge;
+    if (Date.now() >= deadline) assert.fail(`${label}: the bridge never connected`);
+  }
+}
+
+/** A close frame carrying code 4003 and the broker's BUILD_MISMATCH reason. */
+const BUILD_MISMATCH_MARKER = Buffer.concat([
+  Buffer.from([0x0f, 0xa3]), // 4003, big-endian close-code bytes
+  Buffer.from("BUILD_MISMATCH: broker is ", "utf8"),
+]);
+
+function countBuildMismatches(bytes: Buffer): number {
+  let count = 0;
+  for (let index = bytes.indexOf(BUILD_MISMATCH_MARKER); index !== -1; index = bytes.indexOf(BUILD_MISMATCH_MARKER, index + 1)) {
+    count += 1;
+  }
+  return count;
+}
+
+/** Unmask the first text frame in a client->server byte stream (ws client frames are masked). */
+function firstTextFramePayload(bytes: Buffer): Buffer | null {
+  let offset = 0;
+  while (offset + 2 <= bytes.length) {
+    const b0 = bytes[offset]!;
+    const b1 = bytes[offset + 1]!;
+    const opcode = b0 & 0x0f;
+    const masked = (b1 & 0x80) !== 0;
+    let length = b1 & 0x7f;
+    let cursor = offset + 2;
+    if (length === 126) { length = bytes.readUInt16BE(cursor); cursor += 2; }
+    else if (length === 127) { length = Number(bytes.readBigUInt64BE(cursor)); cursor += 8; }
+    let mask: Buffer | null = null;
+    if (masked) { mask = bytes.subarray(cursor, cursor + 4); cursor += 4; }
+    const payload = Buffer.from(bytes.subarray(cursor, cursor + length));
+    if (mask !== null) {
+      for (let i = 0; i < payload.length; i++) payload[i] = (payload[i] ?? 0) ^ (mask[i % 4] ?? 0);
+    }
+    if (opcode === 1) return payload;
+    offset = cursor + length;
+  }
+  return null;
+}
+
+/**
+ * A recording TCP relay in front of the real broker: the WebSocket upgrade
+ * request's Host header is rewritten to the broker's pinned host:port (the
+ * broker rejects any other Host), and every byte in both directions passes
+ * through untouched while broker->client and client->broker traffic is
+ * captured for assertions.
+ */
+async function startCaptureProxy(targetPort: number): Promise<{
+  port: number;
+  brokerBytes: () => Buffer;
+  clientBytes: () => Buffer;
+  close: () => Promise<void>;
+}> {
+  const server = net.createServer();
+  const sockets = new Set<net.Socket>();
+  const fromBroker: Buffer[] = [];
+  const fromClient: Buffer[] = [];
+  server.on("connection", client => {
+    sockets.add(client);
+    client.on("close", () => sockets.delete(client));
+    let head = Buffer.alloc(0);
+    let upstream: net.Socket | null = null;
+    client.on("data", chunk => {
+      if (upstream !== null) { fromClient.push(chunk); upstream.write(chunk); return; }
+      head = Buffer.concat([head, chunk]);
+      const end = head.indexOf("\r\n\r\n");
+      if (end === -1) return;
+      const rewrittenHead = Buffer.from(
+        head.subarray(0, end).toString("latin1").replace(/^Host:.*$/mi, `Host: 127.0.0.1:${targetPort}`) + "\r\n\r\n",
+        "latin1",
+      );
+      const rest = head.subarray(end + 4);
+      upstream = net.connect(targetPort, "127.0.0.1");
+      const peer = upstream;
+      peer.on("data", fromPeer => { fromBroker.push(fromPeer); client.write(fromPeer); });
+      peer.on("close", () => client.end());
+      peer.on("error", () => client.destroy());
+      peer.write(Buffer.concat([rewrittenHead, rest]));
+    });
+    client.on("error", () => { upstream?.destroy(); });
+    client.on("close", () => { upstream?.destroy(); });
+  });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", () => resolve()));
+  const port = (server.address() as net.AddressInfo).port;
+  return {
+    port,
+    brokerBytes: () => Buffer.concat(fromBroker),
+    clientBytes: () => Buffer.concat(fromClient),
+    close: async () => {
+      for (const socket of sockets) socket.destroy();
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    },
+  };
+}
+
+test("mixed A/B unified artifacts: the broker rejects the foreign build with BUILD_MISMATCH (F3)", async () => {
+  const fixture = createUnifiedFixture(REPO_ROOT);
+  const workDir = mkdtempSync(join(tmpdir(), "fiveai ab mismatch "));
+  const sideA = join(workDir, "side A");
+  const sideB = join(workDir, "side B");
+  const stateA = join(sideA, "fiveai-mcp", "mcp", "state");
+  const stateB = join(sideB, "fiveai-mcp", "mcp", "state");
+  let harness: BundleHarness | null = null;
+  let proxy: Awaited<ReturnType<typeof startCaptureProxy>> | null = null;
+  let entryA: ReturnType<typeof spawnUnpackedEntry> | null = null;
+  let entryB: ReturnType<typeof spawnUnpackedEntry> | null = null;
+  const spawnedStateDirs: string[] = [];
+  try {
+    // Build A from the pristine fixture source and keep its ZIP.
+    const packA = spawnSync("pnpm run pack", { shell: true, cwd: fixture.root, encoding: "utf8", maxBuffer: 64 * 1024 * 1024, timeout: 10 * 60 * 1000 });
+    assert.equal(packA.status, 0, `pack A failed:\n${packA.stdout}\n${packA.stderr}`);
+    assert.match(packA.stdout, /Unified artifact packed/);
+    copyFileSync(fixture.zipPath, join(workDir, "artifact A.zip"));
+
+    // Exactly one resource source line changes: B is a different build.
+    const serverSourcePath = join(fixture.root, "packages/fivem-plugin/server/main.js");
+    const serverSource = readFileSync(serverSourcePath, "utf8");
+    writeFileSync(serverSourcePath, serverSource + "\n// ab mixed-artifact regression marker\n");
+    const packB = spawnSync("pnpm run pack", { shell: true, cwd: fixture.root, encoding: "utf8", maxBuffer: 64 * 1024 * 1024, timeout: 10 * 60 * 1000 });
+    assert.equal(packB.status, 0, `pack B failed:\n${packB.stdout}\n${packB.stderr}`);
+    copyFileSync(fixture.zipPath, join(workDir, "artifact B.zip"));
+
+    // Unpack both into space-containing, node_modules-free directories.
+    unzipInto(join(workDir, "artifact A.zip"), sideA);
+    unzipInto(join(workDir, "artifact B.zip"), sideB);
+    assert.equal(existsSync(join(sideA, "fiveai-mcp", "node_modules")), false, "side A is standalone");
+    assert.equal(existsSync(join(sideB, "fiveai-mcp", "node_modules")), false, "side B is standalone");
+
+    // --- A's own build handshakes with itself; record A's hello build id. ---
+    writeUnpackedConfig(sideA, await freePort(), "ab-side-a");
+    entryA = spawnUnpackedEntry(sideA);
+    spawnedStateDirs.push(stateA);
+    await entryA.mcp.initialize();
+    const statusA = await awaitStatusOk(entryA.mcp);
+    const aStatusId = statusA.buildId as string;
+    harness = runServerBundle(join(sideA, "fiveai-mcp", "dist", "server.js"), join(sideA, "fiveai-mcp"));
+    const aBridge = await driveBundleBridge(harness, entryA.mcp, "A bundle connects to A's broker");
+    const aHelloId = aBridge.buildId;
+    assert.equal(aHelloId, aStatusId, "A's resource hello carries A's own build id");
+    harness.stop();
+    harness = null;
+    killTree(entryA.child);
+    entryA = null;
+    await killBroker({ stateDir: stateA });
+
+    // --- B's build runs; B's own resource handshakes; record B's hello build id. ---
+    const portB = await freePort();
+    writeUnpackedConfig(sideB, portB, "ab-side-b");
+    entryB = spawnUnpackedEntry(sideB);
+    spawnedStateDirs.push(stateB);
+    await entryB.mcp.initialize();
+    const statusB = await awaitStatusOk(entryB.mcp);
+    const bStatusId = statusB.buildId as string;
+    assert.notEqual(bStatusId, aStatusId, "the one-line source change produced a different build identity");
+    harness = runServerBundle(join(sideB, "fiveai-mcp", "dist", "server.js"), join(sideB, "fiveai-mcp"));
+    const bBridge = await driveBundleBridge(harness, entryB.mcp, "B bundle connects to B's broker");
+    const bHelloId = bBridge.buildId;
+    assert.equal(bHelloId, bStatusId, "B's resource hello carries B's own build id");
+    assert.notEqual(aHelloId, bHelloId, "the two builds' hellos carry different build ids");
+    harness.stop();
+    harness = null;
+    await waitBridgeNull(entryB.mcp, "B's bridge slot frees before the A-on-B attempt");
+
+    // --- A's resource (foreign build) is refused by B's broker with 4003. ---
+    proxy = await startCaptureProxy(portB);
+    // A's resource now uses B's credentials and reaches B's broker through
+    // the relay; the program files on both sides stay exactly as packed.
+    writeFileSync(join(sideA, "fiveai-mcp", "mcp", "credentials.json"), readFileSync(join(sideB, "fiveai-mcp", "mcp", "credentials.json")));
+    writeUnpackedConfig(sideA, proxy.port, "ab-side-a-on-b");
+    harness = runServerBundle(join(sideA, "fiveai-mcp", "dist", "server.js"), join(sideA, "fiveai-mcp"));
+    for (let round = 0; round < 60 && countBuildMismatches(proxy.brokerBytes()) === 0; round++) {
+      await harness.advance(1);
+    }
+    assert.ok(countBuildMismatches(proxy.brokerBytes()) >= 1, "the foreign build is rejected with BUILD_MISMATCH (4003)");
+    // The bundle retries with backoff (1s/2s/...); let one retry happen so
+    // the rejection is proven persistent, not a one-off race.
+    await new Promise(resolve => setTimeout(resolve, 2600));
+    for (let round = 0; round < 10; round++) await harness.advance(1);
+    const rejections = countBuildMismatches(proxy.brokerBytes());
+    assert.ok(rejections >= 2, `every connection attempt of the foreign build is rejected (observed ${rejections})`);
+
+    // Wire evidence: the rejected hello is A's build, and the close reason
+    // names B's running broker identity.
+    const helloPayload = firstTextFramePayload(proxy.clientBytes());
+    assert.ok(helloPayload !== null, "a hello frame reached the broker through the relay");
+    const helloOnWire = JSON.parse(helloPayload.toString("utf8")) as { payload: { buildId: string } };
+    assert.equal(helloOnWire.payload.buildId, aHelloId, "the rejected hello is A's build");
+    const brokerBytes = proxy.brokerBytes();
+    const reason = brokerBytes.subarray(brokerBytes.indexOf(BUILD_MISMATCH_MARKER) + BUILD_MISMATCH_MARKER.length).toString("utf8");
+    assert.ok(reason.startsWith(bStatusId), `the close reason names the running broker: ${reason.slice(0, 96)}`);
+
+    // No bridge session is ever established for the foreign build.
+    const finalStatus = await entryB.mcp.callStatus();
+    assert.equal(finalStatus.isError, false);
+    assert.equal(finalStatus.structuredContent.bridge, null, "the foreign build never registers a bridge session");
+    console.log(`ab-mismatch evidence: A=${aHelloId} B=${bHelloId} rejections=${rejections}`);
+  } finally {
+    harness?.stop();
+    await proxy?.close();
+    if (entryA !== null) killTree(entryA.child);
+    if (entryB !== null) killTree(entryB.child);
+    for (const stateDir of spawnedStateDirs) await killBroker({ stateDir });
+    fixture.dispose();
+    rmSync(workDir, { recursive: true, force: true });
   }
 });

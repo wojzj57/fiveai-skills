@@ -2,10 +2,17 @@ import { build } from "esbuild";
 import { fileURLToPath } from "node:url";
 import { mkdir, copyFile, rm } from "node:fs/promises";
 import { join } from "node:path";
+import { writeBuildIdentity } from "../../../scripts/build-identity.mjs";
 
 // This package owns its dependencies: esbuild and ws resolve from
-// packages/fivem-plugin/node_modules, never from a sibling package.
+// packages/fivem-plugin/node_modules, never from a sibling package. The
+// repo root is resolved from this script's own location so a fixture
+// workspace builds with its own identity, not the source repository's.
 const root = fileURLToPath(new URL("../", import.meta.url));
+const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
+// One shared identity for both ends (F3): the generated module must exist
+// before esbuild resolves the fiveai-mcp/internal/build-identity subpath.
+writeBuildIdentity(repoRoot);
 await build({ entryPoints: [join(root, "server/main.js")], outfile: join(root, "dist/server.js"), bundle: true, platform: "node", format: "cjs", target: "node22", external: ["bufferutil", "utf-8-validate"], define: { "process.env.WS_NO_BUFFER_UTIL": '"1"', "process.env.WS_NO_UTF_8_VALIDATE": '"1"' } });
 const client = await build({ entryPoints: [join(root, "client/main.js")], outfile: join(root, "dist/client.js"), bundle: true, platform: "browser", format: "iife", target: "es2020", metafile: true });
 for (const output of Object.values(client.metafile.outputs)) {

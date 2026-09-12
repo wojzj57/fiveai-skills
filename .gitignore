@@ -12,6 +12,7 @@ __pycache__/
 # Node
 node_modules/
 packages/mcp/dist/
+packages/mcp/src/generated/
 packages/fivem-plugin/dist/
 packages/fivem-plugin/artifact/
 

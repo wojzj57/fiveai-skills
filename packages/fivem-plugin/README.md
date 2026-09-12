@@ -87,8 +87,12 @@ Restart rules: config changes are read at process/resource start. After a
 `verifyEnabled` change, restart the resource. After any change that affects
 connections or the configuration digest (port, paths, serverLabel,
 verifyEnabled), stop every entry, wait for the old broker to exit, then
-restart the resource. Mixed old/new program versions report
-`INSTANCE_CONFLICT` by design — stop and replace both ends together.
+restart the resource. Mixed program versions are not interchangeable: a
+resource whose build identity differs from the running broker is refused
+at handshake with `BUILD_MISMATCH`, while an entry that meets a broker
+running a different configuration reports `INSTANCE_CONFLICT`. These are
+different failures and not every mixed-version situation produces the
+same error — stop and replace both ends together.
 
 ## Credentials
 

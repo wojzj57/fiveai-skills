@@ -6,6 +6,7 @@ import { dirname, join } from "node:path";
 import { createExecutor, utf8Bytes } from "../shared/execution.js";
 import { validOutcome } from "../shared/outcome.js";
 import { McpConfigSchema, resolveConfigPaths, validateCredentialFile } from "fiveai-mcp/internal/config";
+import { BUILD_ID } from "fiveai-mcp/internal/build-identity";
 
 const resource = GetCurrentResourceName();
 const event = name => `${resource}:${name}`;
@@ -198,7 +199,7 @@ setTick(() => {
     if (item.ws !== socket || socket.readyState !== WebSocket.OPEN) continue;
     if (item.kind === "open") {
       socket.send(JSON.stringify({ v: 1, id: randomUUID(), type: "hello", payload: {
-        role: "bridge", internalProtocol: 1, buildId: "fiveai-mcp/0.1.0", adapterDigest: "host-probe/no-adapters", environment,
+        role: "bridge", internalProtocol: 1, buildId: BUILD_ID, adapterDigest: "host-probe/no-adapters", environment,
       } }));
       continue;
     }

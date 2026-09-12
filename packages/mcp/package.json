@@ -8,14 +8,16 @@
     "node": ">=22.12.0"
   },
   "exports": {
+    "./internal/build-identity": "./src/generated/build-identity.ts",
     "./internal/config": "./src/shared/config.ts"
   },
   "scripts": {
     "build": "pnpm run build:contracts && pnpm run build:entry && pnpm run build:broker",
-    "build:contracts": "esbuild src/index.ts --bundle --format=esm --platform=node --outfile=dist/index.mjs",
-    "build:entry": "esbuild src/cli/entry.ts --bundle --format=esm --platform=node --outfile=dist/entry.mjs --banner:js=\"import { createRequire as __cr } from 'module'; const require = __cr(import.meta.url);\" && node -e \"require('node:fs').copyFileSync('src/cli/windows-files.ps1', 'dist/windows-files.ps1')\"",
-    "build:broker": "esbuild src/broker/main.ts --bundle --format=esm --platform=node --outfile=dist/broker.mjs --banner:js=\"import { createRequire as __cr } from 'module'; const require = __cr(import.meta.url);\"",
-    "typecheck": "tsc --noEmit",
+    "build:identity": "node ../../scripts/build-identity.mjs",
+    "build:contracts": "pnpm run build:identity && esbuild src/index.ts --bundle --format=esm --platform=node --outfile=dist/index.mjs",
+    "build:entry": "pnpm run build:identity && esbuild src/cli/entry.ts --bundle --format=esm --platform=node --outfile=dist/entry.mjs --banner:js=\"import { createRequire as __cr } from 'module'; const require = __cr(import.meta.url);\" && node -e \"require('node:fs').copyFileSync('src/cli/windows-files.ps1', 'dist/windows-files.ps1')\"",
+    "build:broker": "pnpm run build:identity && esbuild src/broker/main.ts --bundle --format=esm --platform=node --outfile=dist/broker.mjs --banner:js=\"import { createRequire as __cr } from 'module'; const require = __cr(import.meta.url);\"",
+    "typecheck": "pnpm run build:identity && tsc --noEmit",
     "test": "pnpm run typecheck && pnpm run build && node --test \"tests/**/*.test.ts\""
   },
   "dependencies": {
