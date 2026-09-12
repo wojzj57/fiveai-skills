@@ -1,17 +1,20 @@
 /**
  * Unified artifact build/pack tests (unified-artifact RFC §3, §7, §9 build/
- * archive and standalone-unpack rows). All scenarios live in this single
- * file on purpose: they share the repository dist/ output and must run
- * sequentially. The unpack end-to-end test spawns a real broker through the
- * shipped entry and cleans it up via runtime.json — it must be the only
- * broker-spawning root test so the per-user named pipes stay uncontended.
+ * archive and standalone-unpack rows). Every scenario runs inside one
+ * throwaway fixture workspace (tests/helpers/unified-fixture.mjs), so these
+ * tests never write to this repository's own dist/ or package outputs — the
+ * enclosing workspace's installed files stay untouched. All scenarios share
+ * the fixture and must run sequentially. The unpack end-to-end test spawns a
+ * real broker through the shipped entry and cleans it up via runtime.json —
+ * together with the preservation test's nested run it makes this a
+ * broker-spawning test file, so the root test command runs files with
+ * --test-concurrency=1 and the per-user named pipes stay uncontended.
  */
 
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { after } from "node:test";
 import { spawn, spawnSync } from "node:child_process";
 import {
-  copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -26,12 +29,19 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import net from "node:net";
 import { unzipSync } from "fflate";
+import { createUnifiedFixture } from "./helpers/unified-fixture.mjs";
 
 const repoRoot = fileURLToPath(new URL("../", import.meta.url));
-const outputDir = join(repoRoot, "dist");
-const installDir = join(outputDir, "fiveai-mcp");
-const zipPath = join(outputDir, "fiveai-mcp.zip");
-const buildScript = join(repoRoot, "scripts", "build-unified.mjs");
+// Every writable path below belongs to the fixture workspace this file
+// creates; only the command-wiring assertions at the end read the enclosing
+// repository's manifest, and only read-only.
+const fixture = createUnifiedFixture(repoRoot);
+after(() => fixture.dispose());
+const workspaceRoot = fixture.root;
+const installDir = fixture.installDir;
+const zipPath = fixture.zipPath;
+const buildScript = join(workspaceRoot, "scripts", "build-unified.mjs");
+const defaultConfigPath = join(workspaceRoot, "packages", "fivem-plugin", "mcp", "config.json");
 
 const DELIVERY_NAMES = [
   "fiveai-mcp/fxmanifest.lua",
@@ -74,7 +84,7 @@ async function freePort() {
 }
 
 test("pnpm run pack produces the unified install directory and a single-root whitelist ZIP", () => {
-  const pack = spawnSync("pnpm run pack", { shell: true, encoding: "utf8", cwd: repoRoot });
+  const pack = spawnSync("pnpm run pack", { shell: true, encoding: "utf8", cwd: workspaceRoot });
   assert.equal(pack.status, 0, `pack output: ${pack.stdout}\n${pack.stderr}`);
   assert.match(pack.stdout, /Unified artifact packed/);
 
@@ -87,8 +97,8 @@ test("pnpm run pack produces the unified install directory and a single-root whi
   for (const name of Object.keys(entries)) {
     assert.match(name, /^fiveai-mcp\//, "every entry lives under the single fiveai-mcp root");
   }
-  // The ZIP carries the repository default config, never local runtime data.
-  const defaultConfig = readFileSync(join(repoRoot, "packages", "fivem-plugin", "mcp", "config.json"));
+  // The ZIP carries the workspace default config, never local runtime data.
+  const defaultConfig = readFileSync(defaultConfigPath);
   assert.deepEqual(
     Buffer.from(entries["fiveai-mcp/mcp/config.json"]).equals(defaultConfig),
     true,
@@ -115,7 +125,7 @@ test("publish preserves local config, credentials, state, and user files byte-fo
   try {
     // A local publish never creates a ZIP.
     rmSync(zipPath, { force: true });
-    const publish = runNode([buildScript, "publish"], { cwd: repoRoot });
+    const publish = runNode([buildScript, "publish"], { cwd: workspaceRoot });
     assert.equal(publish.status, 0, `publish stderr: ${publish.stderr}`);
     assert.match(publish.stdout, /Unified artifact published/);
     assert.equal(existsSync(zipPath), false, "publish does not generate a ZIP");
@@ -126,14 +136,14 @@ test("publish preserves local config, credentials, state, and user files byte-fo
     assert.equal(existsSync(join(installDir, "fxmanifest.lua")), true, "program files still updated");
 
     // pack zips the clean staging tree: the sentinel config never leaks in.
-    const pack = runNode([buildScript, "pack"], { cwd: repoRoot });
+    const pack = runNode([buildScript, "pack"], { cwd: workspaceRoot });
     assert.equal(pack.status, 0, `pack stderr: ${pack.stderr}`);
     const entries = readZipEntries(zipPath);
     assert.equal("fiveai-mcp/mcp/credentials.json" in entries, false, "credentials never enter the ZIP");
     assert.equal("fiveai-mcp/mcp/state/runtime.json" in entries, false, "state never enters the ZIP");
     assert.equal("fiveai-mcp/notes.txt" in entries, false, "user files never enter the ZIP");
     assert.deepEqual(
-      Buffer.from(entries["fiveai-mcp/mcp/config.json"]).equals(readFileSync(join(repoRoot, "packages", "fivem-plugin", "mcp", "config.json"))),
+      Buffer.from(entries["fiveai-mcp/mcp/config.json"]).equals(readFileSync(defaultConfigPath)),
       true,
       "the ZIP keeps the default config even when the local one differs",
     );
@@ -146,7 +156,7 @@ test("publish preserves local config, credentials, state, and user files byte-fo
 });
 
 test("a failed orchestration exits non-zero, prints no success, and leaves protected files untouched", () => {
-  const serverBundle = join(repoRoot, "packages", "fivem-plugin", "dist", "server.js");
+  const serverBundle = join(workspaceRoot, "packages", "fivem-plugin", "dist", "server.js");
   const hidden = `${serverBundle}.hidden`;
   const sentinelConfig = JSON.stringify({ version: 1, broker: { host: "127.0.0.1" }, serverLabel: "keep-me" });
   const sentinelCredentials = '{"entryToken":"local-entry-token","bridgeToken":"local-bridge-token"}';
@@ -154,7 +164,7 @@ test("a failed orchestration exits non-zero, prints no success, and leaves prote
   writeFileSync(join(installDir, "mcp", "credentials.json"), sentinelCredentials);
   renameSync(serverBundle, hidden);
   try {
-    const failed = runNode([buildScript, "publish"], { cwd: repoRoot });
+    const failed = runNode([buildScript, "publish"], { cwd: workspaceRoot });
     assert.notEqual(failed.status, 0, "a missing source must fail the build");
     assert.doesNotMatch(failed.stdout, /Unified artifact published|packed/);
     assert.match(failed.stderr, /build-unified/);
@@ -162,7 +172,7 @@ test("a failed orchestration exits non-zero, prints no success, and leaves prote
     assert.equal(readFileSync(join(installDir, "mcp", "credentials.json"), "utf8"), sentinelCredentials, "credentials preserved");
   } finally {
     renameSync(hidden, serverBundle);
-    const restore = runNode([buildScript, "publish"], { cwd: repoRoot });
+    const restore = runNode([buildScript, "publish"], { cwd: workspaceRoot });
     assert.equal(restore.status, 0, `restore publish failed: ${restore.stderr}`);
     rmSync(join(installDir, "mcp", "credentials.json"), { force: true });
     rmSync(join(installDir, "mcp", "config.json"), { force: true });
