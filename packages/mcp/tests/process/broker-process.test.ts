@@ -465,9 +465,9 @@ test("stdio chain: initialize, tools/list, and a real tools/call status (RFC §1
       result?: { tools?: Array<{ name: string }> };
     };
     const names = toolsResponse.result?.tools?.map((tool) => tool.name) ?? [];
-    // Only genuinely servable tools are registered (completeness review
-    // step 2); the screenshot contract is excluded (RFC §14).
-    assert.deepEqual(names, ["status"]);
+    // Discovery is independent of a live FiveM bridge. Every supported
+    // tool remains visible; unavailable targets fail at invocation time.
+    assert.deepEqual(names, ["status", "queue", "execute_lua", "execute_ts", "resource", "logs", "esx", "qbcore", "ox", "reference"]);
     assert.equal(names.includes("screenshot"), false);
 
     const status = await awaitStatusOk(mcp);
@@ -477,7 +477,7 @@ test("stdio chain: initialize, tools/list, and a real tools/call status (RFC §1
     assert.equal(status.shuttingDown, false);
     assert.equal(status.connectedEntries, 1);
     assert.equal(status.bridge, null);
-    assert.deepEqual(status.registeredTools, ["status"]);
+    assert.deepEqual(status.registeredTools, names);
     assert.deepEqual(status.screenshot, { implemented: false, enabled: false });
     assert.equal(status.dispatchBlocked, false);
     // The ok-state recovery summary carries no code/message keys at all

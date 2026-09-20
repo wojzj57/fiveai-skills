@@ -6,6 +6,7 @@ import {
   REGISTERED_TOOLS,
   isToolRegistered,
 } from "../src/tools/registry.ts";
+import { TOOL_CATALOG } from "../src/tools/catalog.ts";
 import {
   TOOL_INPUT_SCHEMAS,
   toolInputJsonSchema,
@@ -32,12 +33,12 @@ test("the public tool surface is exactly the ten RFC tools", () => {
   assert.equal(TOOL_NAMES.includes("screenshot" as never), false);
 });
 
-test("this slice registers only the status tool", () => {
-  assert.deepEqual([...REGISTERED_TOOLS], ["status"]);
-  assert.equal(isToolRegistered("status"), true);
+test("the registered tool surface is the complete RFC catalog", () => {
+  assert.deepEqual([...REGISTERED_TOOLS], [...TOOL_NAMES]);
+  assert.deepEqual(Object.keys(TOOL_CATALOG), [...TOOL_NAMES]);
   for (const tool of TOOL_NAMES) {
-    if (tool === "status") continue;
-    assert.equal(isToolRegistered(tool), false, `${tool} is not registered yet`);
+    assert.equal(isToolRegistered(tool), true, `${tool} is registered`);
+    assert.ok(TOOL_CATALOG[tool].description.length > 0, `${tool} is described`);
   }
 });
 

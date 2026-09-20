@@ -1,17 +1,13 @@
-import type { ToolName } from "../protocol/tool-names.ts";
+import { TOOL_NAMES, type ToolName } from "../protocol/tool-names.ts";
 
 /**
- * Tool registration contract for the first implementation step.
- *
- * The full tool surface is exactly ten tools (RFC §4); this slice registers
- * only `status` — the one tool that is genuinely servable from broker-level
- * state without the FIFO, executors, or bridge dispatch. The remaining tools
- * are registered as their subsystems land in later steps. The screenshot
- * contract is never registered (RFC §12/§14): an unregistered tool must
- * surface as a protocol-level unknown-tool result, not as a failing tool.
+ * The public MCP surface is deliberately fixed.  A handler may return a
+ * structured availability error when its target is absent, but discovery
+ * must never hide a supported tool just because FiveM is disconnected.
+ * Screenshot support remains an explicitly disabled, unregistered contract.
  */
 
-export const REGISTERED_TOOLS = ["status"] as const satisfies readonly ToolName[];
+export const REGISTERED_TOOLS = TOOL_NAMES;
 
 export type RegisteredTool = (typeof REGISTERED_TOOLS)[number];
 

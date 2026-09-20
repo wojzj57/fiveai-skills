@@ -2,8 +2,8 @@
  * stdio entry (RFC §4). One entry process per AI client. It speaks MCP on
  * stdio, ensures first-run credentials exist (unified-artifact RFC §5),
  * discovers or spawns the shared broker, and forwards tool calls over the
- * authenticated internal WebSocket. Only genuinely servable tools are
- * registered — in this slice exactly `status`.
+ * authenticated internal WebSocket. Tool discovery is sourced from the
+ * shared catalog and does not depend on a bridge being connected.
  *
  * Diagnostics go to stderr only; stdout belongs to the MCP protocol.
  * The entry never re-sends a tool operation after a reconnect (RFC §4.3):
@@ -24,7 +24,10 @@ import {
 import { LIMITS } from "../protocol/limits.ts";
 import { parseMessage, type AnyTypedMessage, type MessageEnvelope } from "../protocol/envelope.ts";
 import { CLOSE_CODES } from "../protocol/close-codes.ts";
-import { StatusInputSchema, toolInputJsonSchema } from "../tools/schemas.ts";
+import { TOOL_INPUT_SCHEMAS, toolInputJsonSchema } from "../tools/schemas.ts";
+import { TOOL_CATALOG } from "../tools/catalog.ts";
+import { CONTROL_TOOLS, TOOL_NAMES, type ToolName } from "../protocol/tool-names.ts";
+import { isResourceReadArguments } from "../protocol/messages.ts";
 import { loadConfig, type LoadedConfig, type LoadedRuntimeConfig } from "./config.ts";
 import { ensureCredentials } from "./credentials.ts";
 import {
@@ -42,11 +45,6 @@ const EXIT_BROKER_UNAVAILABLE = 3;
 /** Credential phase failures: missing-but-uninitializable, corrupt, linked, boundary violations, busy (unified-artifact RFC §5). */
 const EXIT_CREDENTIAL_FAILURE = 4;
 const EXIT_UNEXPECTED = 1;
-
-const STATUS_TOOL_DESCRIPTION =
-  "Report the live FiveM debug broker status: connection state, server bridge identity, " +
-  "connected clients, queue state, recovery/dispatch state, and effective limits. " +
-  "Read-only; available even when FiveM is not connected. Pass clientId to filter the client list display only.";
 
 const BROKER_SPAWN_TIMEOUT_MS = 20_000;
 const CONNECT_WAIT_MS = 20_000;
@@ -482,27 +480,26 @@ async function main(): Promise<number> {
   });
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: [
-      {
-        name: "status",
-        description: STATUS_TOOL_DESCRIPTION,
-        inputSchema: toolInputJsonSchema("status") as {
+    tools: TOOL_NAMES.map((name) => ({
+        name,
+        description: TOOL_CATALOG[name].description,
+        inputSchema: toolInputJsonSchema(name) as {
           type: "object";
           properties?: Record<string, unknown>;
         },
-      },
-    ],
+      })),
   }));
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
-    if (name !== "status") {
+    if (!(TOOL_NAMES as readonly string[]).includes(name)) {
       return {
         isError: true,
         content: [{ type: "text", text: `unknown tool: ${name}` }],
       };
     }
-    const parsed = StatusInputSchema.safeParse(args ?? {});
+    const tool = name as ToolName;
+    const parsed = TOOL_INPUT_SCHEMAS[tool].safeParse(args ?? {});
     if (!parsed.success) {
       const error = {
         code: "INVALID_ARGUMENT",
@@ -514,9 +511,23 @@ async function main(): Promise<number> {
         content: [{ type: "text", text: JSON.stringify({ error }, null, 2) }],
       };
     }
+    const controlRouted =
+      (CONTROL_TOOLS as readonly string[]).includes(tool) &&
+      (tool !== "resource" || isResourceReadArguments(parsed.data));
+    if (!controlRouted) {
+      const error = {
+        code: "TARGET_UNAVAILABLE",
+        message: "the execution dispatcher is not connected to a FiveM bridge",
+      };
+      return {
+        isError: true,
+        structuredContent: { error },
+        content: [{ type: "text", text: JSON.stringify({ error }, null, 2) }],
+      };
+    }
     const response = await link.callControl(CONNECT_WAIT_MS, (requestId) => ({
       requestId,
-      tool: "status",
+      tool,
       arguments: parsed.data,
     }));
     if (response.error !== undefined) {
