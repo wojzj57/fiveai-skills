@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -90,8 +90,7 @@ test("JS executor preserves undefined, BigInt, holes and detects serialization f
  * context mimics FXServer: the unified resource must read mcp/config.json
  * via GetResourcePath (never the retired fiveai_mcp_* convars), timers are
  * recorded so backoff delays fire deterministically between pumps, and the
- * process object reports a non-Windows platform so the optional identity
- * lookup stays out of the way (covered by process-identity.test.ts).
+ * optional Windows identity lookup is stubbed so no child process is spawned.
  */
 interface ServerHarness {
   /** Fire all recorded timers (compressed backoff), then pump host ticks. */
@@ -112,22 +111,32 @@ interface ServerHarness {
   stop: () => void;
 }
 
-function runServerBundle(options: { resourceName: string; resourceDir: string }): ServerHarness {
+function runServerBundle(options: { resourceName: string; resourceDir: string; denyMetadata?: boolean; identityLookup?: "sync-error" | "async-error" | "invalid-output" | "success" }): ServerHarness {
   const realRequire = createRequire(import.meta.url);
   let lstatCalls = 0;
   let readFileCalls = 0;
+  let onTick = false;
   const harnessRequire = (name: string) => {
     const mod = realRequire(name);
+    if (name === "node:child_process" && options.identityLookup) {
+      return { ...mod, execFile: (_file: string, _args: string[], _options: unknown, callback: (error: Error | null, stdout: string) => void) => {
+        const error = new Error("restricted child process: private-fixture-detail");
+        if (options.identityLookup === "sync-error") throw error;
+        setImmediate(() => callback(options.identityLookup === "async-error" ? error : null,
+          options.identityLookup === "success" ? "2026-01-01T00:00:00.000Z" : "invalid"));
+      } };
+    }
     if (name === "node:fs/promises") {
       return {
         ...mod,
-        readFile: (...args: Parameters<typeof mod.readFile>) => {
+        readFile: async () => {
           readFileCalls += 1;
-          return mod.readFile(...args);
+          throw Object.assign(new Error("no device found"), { code: "ERR_ACCESS_DENIED" });
         },
-        lstat: (...args: Parameters<typeof mod.lstat>) => {
+        lstat: async (path: string, ...args: unknown[]) => {
           lstatCalls += 1;
-          return mod.lstat(...args);
+          if (options.denyMetadata || !path.startsWith(options.resourceDir + "\\")) throw Object.assign(new Error("metadata denied"), { code: "ERR_ACCESS_DENIED" });
+          return mod.lstat(path, ...args);
         },
       };
     }
@@ -144,11 +153,10 @@ function runServerBundle(options: { resourceName: string; resourceDir: string })
   const outgoing: unknown[][] = [];
   const reports: string[] = [];
   // A proxy keeps every real process member available to the bundle while
-  // reporting a non-Windows platform (the identity lookup path is covered
-  // separately; 'platform' itself is read-only on the real process object).
+  // selecting Windows only when the child-process lookup is safely stubbed.
   const fakeProcess = new Proxy(process, {
     get(target, prop, receiver) {
-      if (prop === "platform") return "linux";
+      if (prop === "platform") return options.identityLookup ? "win32" : "linux";
       const value = Reflect.get(target, prop, target);
       return typeof value === "function" ? value.bind(target) : value;
     },
@@ -164,6 +172,13 @@ function runServerBundle(options: { resourceName: string; resourceDir: string })
     clearTimeout: (id: number) => { timers.delete(id); },
     setInterval: () => 1, clearInterval() {}, setTick: (fn: () => void) => ticks.push(fn),
     GetCurrentResourceName: () => options.resourceName,
+    LoadResourceFile: (name: string, path: string) => {
+      assert.equal(onTick, true, "resource natives must run on a host tick, never a Node callback");
+      assert.equal(name, options.resourceName);
+      assert.ok(!path.startsWith("/") && !path.includes(":") && !path.includes("\\") && !path.split("/").includes(".."));
+      readFileCalls += 1;
+      try { return readFileSync(join(options.resourceDir, path), "utf8"); } catch { return null; }
+    },
     GetResourcePath: (name: string) => {
       assert.equal(name, options.resourceName, "the resource path follows the current resource name");
       return options.resourceDir;
@@ -185,7 +200,8 @@ function runServerBundle(options: { resourceName: string; resourceDir: string })
   };
   const pump = async (rounds = 3) => {
     for (let i = 0; i < rounds; i++) {
-      for (const tick of ticks) tick();
+      onTick = true;
+      try { for (const tick of ticks) tick(); } finally { onTick = false; }
       await new Promise(resolve => setTimeout(resolve, 15));
     }
   };
@@ -241,6 +257,37 @@ async function startBridgeListener(): Promise<{
   };
 }
 
+/** A broker that deliberately rejects the bridge's hello as a foreign build. */
+async function startBuildMismatchListener(): Promise<{
+  port: number;
+  token: string;
+  connections: () => number;
+  close: () => Promise<void>;
+}> {
+  const wss = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+  await new Promise<void>(resolve => wss.once("listening", resolve));
+  const address = wss.address() as { port: number };
+  const token = randomBytes(32).toString("base64");
+  let connectionCount = 0;
+  wss.on("connection", (ws: WsSocket, request: IncomingMessage) => {
+    connectionCount += 1;
+    assert.equal(request.headers.authorization, `Bearer ${token}`);
+    ws.on("message", data => {
+      const message = parseMessage(JSON.parse(String(data)));
+      if (message.type === "hello") ws.close(4003, "BUILD_MISMATCH");
+    });
+  });
+  return {
+    port: address.port,
+    token,
+    connections: () => connectionCount,
+    close: async () => {
+      for (const ws of wss.clients) ws.terminate();
+      await new Promise<void>(resolve => wss.close(() => resolve()));
+    },
+  };
+}
+
 function makeResourceDir(): string {
   return mkdtempSync(join(tmpdir(), "fiveai-resource-"));
 }
@@ -260,6 +307,60 @@ function writeResourceCredentials(dir: string, token: string): void {
     entryToken: randomBytes(32).toString("base64"),
     bridgeToken: token,
   }));
+}
+
+for (const identityLookup of ["sync-error", "async-error", "invalid-output", "success"] as const) {
+  test(`Windows identity lookup ${identityLookup} does not block bridge startup`, async () => {
+    const dir = makeResourceDir();
+    const broker = await startBridgeListener();
+    let harness: ServerHarness | null = null;
+    try {
+      writeResourceConfig(dir, broker.port, true);
+      writeResourceCredentials(dir, broker.token);
+      harness = runServerBundle({ resourceName: "fiveai-mcp", resourceDir: dir, identityLookup });
+      for (let i = 0; i < 40 && !broker.frames.some(f => f.type === "clients.snapshot"); i++) await harness.advance(1);
+      const hello = broker.frames.find(f => f.type === "hello");
+      assert.ok(hello?.type === "hello" && hello.payload.role === "bridge");
+      assert.equal(hello.payload.environment.serverIdentityVerifiable, identityLookup === "success");
+      if (identityLookup === "success") assert.equal(hello.payload.environment.serverStartedAt, "2026-01-01T00:00:00.000Z");
+      assert.ok(broker.frames.some(f => f.type === "clients.snapshot"), "handshake completes despite unavailable OS identity");
+      await harness.pump(5);
+      assert.equal(harness.reports.filter(line => line.includes("OS process identity unavailable")).length, identityLookup === "success" ? 0 : 1);
+      assert.ok(harness.reports.every(line => !line.includes("private-fixture-detail")));
+    } finally {
+      harness?.stop();
+      await broker.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+}
+
+for (const pathKind of ["absolute-inside", "relative-inside", "outside"] as const) {
+  test(`native resource reading handles ${pathKind} without redirecting outside paths`, async () => {
+    const dir = makeResourceDir();
+    const broker = await startBridgeListener();
+    let harness: ServerHarness | null = null;
+    try {
+      writeResourceConfig(dir, broker.port, false);
+      writeResourceCredentials(dir, broker.token);
+      const configPath = join(dir, "mcp", "config.json");
+      const config = JSON.parse(readFileSync(configPath, "utf8"));
+      config.credentialFile = pathKind === "absolute-inside" ? join(dir, "mcp", "credentials.json")
+        : pathKind === "relative-inside" ? "../mcp/credentials.json" : join(`${dir}-sibling`, "mcp", "credentials.json");
+      writeFileSync(configPath, JSON.stringify(config));
+      harness = runServerBundle({ resourceName: "renamed-res", resourceDir: dir });
+      for (let i = 0; i < 30 && !broker.frames.some(f => f.type === "clients.snapshot"); i++) await harness.advance(1);
+      assert.equal(broker.frames.some(f => f.type === "clients.snapshot"), pathKind !== "outside");
+      if (pathKind === "outside") {
+        assert.equal(harness.lstatCalls(), 1, "unreadable outside credentials fail without retry");
+        assert.equal(harness.readFileCalls(), 1, "only config is read; local credentials cannot substitute for outside credentials");
+      }
+    } finally {
+      harness?.stop();
+      await broker.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 }
 
 test("server bundle bridges from mcp/config.json and credentials under a dynamic resource name", async () => {
@@ -336,6 +437,30 @@ test("server bundle bridges from mcp/config.json and credentials under a dynamic
   }
 });
 
+test("BUILD_MISMATCH stops bridge retries and gives one non-sensitive upgrade notice", async () => {
+  const dir = makeResourceDir();
+  const broker = await startBuildMismatchListener();
+  let harness: ServerHarness | null = null;
+  try {
+    harness = runServerBundle({ resourceName: "fiveai-mcp", resourceDir: dir });
+    writeResourceConfig(dir, broker.port, false);
+    writeResourceCredentials(dir, broker.token);
+    for (let i = 0; i < 40 && broker.connections() === 0; i++) {
+      await harness.advance(1);
+    }
+    assert.equal(broker.connections(), 1, "the bridge reaches the broker once");
+    for (let i = 0; i < 8; i++) await harness.advance(1);
+    assert.equal(broker.connections(), 1, "a build mismatch is terminal and never reconnects");
+    const notices = harness.reports.filter(line => line.includes("upgrade or reinstall"));
+    assert.equal(notices.length, 1, "reports one actionable upgrade notice");
+    assert.doesNotMatch(notices[0]!, /BUILD_MISMATCH|fiveai-mcp\/|token|[a-f0-9]{16,}/i, "notice has no protocol or build details");
+  } finally {
+    harness?.stop();
+    await broker.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("missing credentials keep waiting with a throttled notice, then auto-connect when the file appears", async () => {
   const dir = makeResourceDir();
   const broker = await startBridgeListener();
@@ -402,6 +527,30 @@ test("corrupt credentials are a terminal invalid state for this resource start",
   }
 });
 
+for (const failure of ["metadata-denied", "hard-link"] as const) {
+  test(`native credential reading fails closed on ${failure}`, async () => {
+    const dir = makeResourceDir();
+    const broker = await startBridgeListener();
+    let harness: ServerHarness | null = null;
+    try {
+      writeResourceConfig(dir, broker.port, false);
+      writeResourceCredentials(dir, broker.token);
+      if (failure === "hard-link") linkSync(join(dir, "mcp", "credentials.json"), join(dir, "mcp", "alias.json"));
+      harness = runServerBundle({ resourceName: "fiveai-mcp", resourceDir: dir, denyMetadata: failure === "metadata-denied" });
+      await harness.advance(4);
+      await harness.advance(4);
+      assert.equal(broker.frames.length, 0, "unverified credentials must never authenticate");
+      assert.equal(harness.lstatCalls(), 1, "terminal failures must not retry");
+      assert.ok(harness.reports.some(line => line.includes("credentials") && (line.includes("invalid") || line.includes("unreadable"))));
+      assert.ok(harness.reports.every(line => !line.includes(broker.token)));
+    } finally {
+      harness?.stop();
+      await broker.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+}
+
 test("a missing config is an incomplete installation, reported without credential polling", async () => {
   const dir = makeResourceDir();
   const broker = await startBridgeListener();
@@ -430,7 +579,7 @@ test("resource stop clears timers and discards late credential read results", as
   try {
     harness = runServerBundle({ resourceName: "fiveai-mcp", resourceDir: dir });
     writeResourceConfig(dir, broker.port, true);
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < 20 && !(harness.scheduledTimers() === 1 && harness.reports.some(line => line.includes("credentials not present yet"))); i++) {
       await harness.advance(1);
     }
     assert.ok(harness.reports.some(line => line.includes("credentials not present yet")));

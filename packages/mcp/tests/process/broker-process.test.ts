@@ -1590,12 +1590,12 @@ test("mixed A/B unified artifacts: the broker rejects the foreign build with BUI
       await harness.advance(1);
     }
     assert.ok(countBuildMismatches(proxy.brokerBytes()) >= 1, "the foreign build is rejected with BUILD_MISMATCH (4003)");
-    // The bundle retries with backoff (1s/2s/...); let one retry happen so
-    // the rejection is proven persistent, not a one-off race.
+    // A mixed build cannot recover through retries. Wait beyond the first
+    // backoff interval and prove the rejected resource does not reconnect.
     await new Promise(resolve => setTimeout(resolve, 2600));
     for (let round = 0; round < 10; round++) await harness.advance(1);
     const rejections = countBuildMismatches(proxy.brokerBytes());
-    assert.ok(rejections >= 2, `every connection attempt of the foreign build is rejected (observed ${rejections})`);
+    assert.equal(rejections, 1, `the foreign build is rejected once and does not reconnect (observed ${rejections})`);
 
     // Wire evidence: the rejected hello is A's build, and the close reason
     // names B's running broker identity.

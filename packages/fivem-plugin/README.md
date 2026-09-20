@@ -168,11 +168,11 @@ stopped while copying.
 
 ## FxDK note
 
-FxDK watches project files. Because the desktop entry writes
-`mcp/credentials.json` and the broker writes `mcp/state/`, the watcher may
-keep restarting the resource. Close the resource's auto-restart toggle in
-FxDK and restart manually; code changes need a manual resource restart
-anyway.
+FxDK watches project files. If you observe this resource repeatedly restarting
+after the desktop entry writes `mcp/credentials.json` or the broker writes
+`mcp/state/`, temporarily disable auto-restart for this resource in FxDK and
+restart it manually. No watcher change is needed when that restart loop is not
+observed; code changes still need a manual resource restart.
 
 ## Repository development
 

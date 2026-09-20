@@ -2,7 +2,7 @@ import WebSocket from "ws";
 import { randomUUID, randomBytes } from "node:crypto";
 import { execFile } from "node:child_process";
 import { readFile, lstat } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, join, relative, isAbsolute } from "node:path";
 import { createExecutor, utf8Bytes } from "../shared/execution.js";
 import { validOutcome } from "../shared/outcome.js";
 import { McpConfigSchema, resolveConfigPaths, validateCredentialFile } from "fiveai-mcp/internal/config";
@@ -19,6 +19,9 @@ let identity = null;
 let stopped = false;
 let retryAt = 0;
 let attempts = 0;
+// Internal protocol v1 BUILD_MISMATCH. Keep it local to the bundled bridge so
+// the FiveM runtime does not need to load MCP source modules at runtime.
+const BUILD_MISMATCH_CLOSE_CODE = 4003;
 let lastSeen = 0;
 let verificationBusy = false;
 let clientInvocation = null;
@@ -40,6 +43,7 @@ let phase = "load-config";
 let bridge = null;            // { url, credentialFile, token } once each stage completes
 let verifyEnabled = false;    // Read once at resource start (RFC section 6).
 let configPath = null;
+let resourcePath = null;
 let bootstrapStarted = false;
 let credentialTimer = null;
 let credentialReadInFlight = false;
@@ -50,10 +54,16 @@ let lastCredentialNoticeAt = 0;
 // resource epoch as evidence of an FXServer process restart.
 if (process.platform === "win32") {
   const shell = `${process.env.SystemRoot ?? "C:\\Windows"}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`;
-  execFile(shell, ["-NoProfile", "-NonInteractive", "-Command", `(Get-Process -Id ${process.pid}).StartTime.ToUniversalTime().ToString('o')`],
-    { windowsHide: true, timeout: 3000, maxBuffer: 4096 }, (error, stdout) => {
-      incoming.push({ kind: "identity", startedAt: !error && Number.isFinite(Date.parse(stdout.trim())) ? new Date(stdout.trim()).toISOString() : null });
-    });
+  try {
+    execFile(shell, ["-NoProfile", "-NonInteractive", "-Command", `(Get-Process -Id ${process.pid}).StartTime.ToUniversalTime().ToString('o')`],
+      { windowsHide: true, timeout: 3000, maxBuffer: 4096 }, (error, stdout) => {
+        if (!stopped) incoming.push({ kind: "identity", startedAt: !error && Number.isFinite(Date.parse(stdout.trim())) ? new Date(stdout.trim()).toISOString() : null });
+      });
+  } catch {
+    // FxDK may deny child processes synchronously before a callback exists.
+    // This optional probe must not prevent the resource from loading.
+    incoming.push({ kind: "identity", startedAt: null });
+  }
 }
 
 function send(type, payload) {
@@ -80,9 +90,17 @@ function connect() {
     if (incoming.length >= 128) { ws.close(4007, "inbound queue full"); return; }
     incoming.push({ kind: "frame", ws, text: String(data) });
   });
-  ws.on("close", () => {
+  ws.on("close", code => {
     if (socket !== ws) return;
     socket = null; identity = null;
+    if (stopped) return;
+    if (code === BUILD_MISMATCH_CLOSE_CODE) {
+      // A mixed artifact cannot recover through retries. This terminal state
+      // also bounds the non-sensitive operator notice to one per resource run.
+      phase = "incompatible";
+      console.log("[fivem-plugin] MCP bridge version mismatch; upgrade or reinstall both the desktop entry and the FiveM resource, then restart the resource");
+      return;
+    }
     if (phase === "connected") phase = "connect";
     retryAt = Date.now() + ([1000, 2000, 4000, 8000][attempts++] ?? 10000) + Math.floor(Math.random() * 500);
   });
@@ -103,10 +121,12 @@ function pollCredentials() {
   if (stopped || phase !== "wait-credentials" || credentialReadInFlight) return;
   credentialReadInFlight = true;
   const target = bridge.credentialFile;
-  // Plain file I/O: these callbacks must never call natives or exports.
+  // Metadata checks remain real OS checks; native reads are queued to a
+  // host tick, never invoked from the libuv completion callback.
   lstat(target).then(
     stat => {
-      readFile(target, "utf8").then(
+      if (stopped) { credentialReadInFlight = false; return; }
+      onHostTick(() => readResourceText(target)).then(
         text => {
           credentialReadInFlight = false;
           if (!stopped) incoming.push({ kind: "credentials", facts: { isRegularFile: stat.isFile(), isSymbolicLink: stat.isSymbolicLink(), linkCount: stat.nlink }, text });
@@ -124,23 +144,39 @@ function pollCredentials() {
   );
 }
 
+// Node fs does not interpret @resource paths. Resource content must go
+// through the native on a host tick; keep physical paths for OS metadata
+// and desktop config resolution. External paths retain normal fs behavior.
+function readResourceText(path) {
+  if (stopped) throw Object.assign(new Error("resource stopped"), { code: "STOPPED" });
+  const local = relative(resourcePath, path).replaceAll("\\", "/");
+  if (!local || local === ".." || local.startsWith("../") || isAbsolute(local)) return readFile(path, "utf8");
+  const text = LoadResourceFile(resource, local);
+  // The native's null result does not distinguish missing from denied.
+  // Never classify this as ENOENT or regenerate credentials from it.
+  if (typeof text !== "string") throw Object.assign(new Error("resource file unavailable"), { code: "RESOURCE_FILE_UNAVAILABLE" });
+  return text;
+}
+
 setTick(() => {
   if (stopped) return;
   if (!bootstrapStarted) {
     // The resource directory is resolved on the host tick (RFC section 6);
     // renames do not matter because the path follows GetCurrentResourceName.
     bootstrapStarted = true;
-    const resourcePath = GetResourcePath(resource);
+    resourcePath = GetResourcePath(resource);
     configPath = join(resourcePath, "mcp", "config.json");
-    readFile(configPath, "utf8").then(
-      text => { if (!stopped) incoming.push({ kind: "config", text }); },
-      error => { if (!stopped) incoming.push({ kind: "config-error", code: error?.code ?? "EIO" }); },
-    );
+    try {
+      incoming.push({ kind: "config", text: readResourceText(configPath) });
+    } catch (error) {
+      incoming.push({ kind: "config-error", code: error?.code ?? "EIO" });
+    }
   }
   for (let n = 0; n < 32 && incoming.length; n++) {
     const item = incoming.shift();
     if (item.kind === "identity") {
       if (item.startedAt) { environment.serverStartedAt = item.startedAt; environment.serverIdentityVerifiable = true; }
+      else console.log("[fivem-plugin] OS process identity unavailable; continuing bridge startup without verified process restart detection");
       identityReady = true;
       continue;
     }
