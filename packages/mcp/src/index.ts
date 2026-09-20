@@ -19,4 +19,5 @@ export * from "./protocol/runtime.ts";
 export * from "./tools/schemas.ts";
 export * from "./tools/registry.ts";
 export * from "./tools/catalog.ts";
+export * from "./scheduler/task-scheduler.ts";
 export * from "./contracts/screenshot.disabled.ts";
