@@ -15,6 +15,9 @@ packages/mcp/dist/
 packages/mcp/src/generated/
 packages/fivem-plugin/dist/
 packages/fivem-plugin/artifact/
+# P0 experiment build output: compiled in place because the resource folder
+# itself is what gets linked into a test server.
+packages/fivem-plugin/experiments/*/dist/
 
 # Unified artifact build output (contains runtime credentials/state)
 /dist/

@@ -18,6 +18,8 @@
     "build": "pnpm --filter fiveai-mcp run build && pnpm --filter fivem-plugin run build && node scripts/build-unified.mjs publish",
     "pack": "pnpm run build && node scripts/build-unified.mjs pack",
     "build:resource": "pnpm run build",
+    "build:p0": "pnpm --filter fivem-plugin run build:p0",
+    "typecheck:p0": "pnpm --filter fivem-plugin run typecheck:p0",
     "test": "node --test --test-concurrency=1 \"tests/**/*.test.mjs\"",
     "test:mcp": "node tests/run-mcp-suite-fixture.mjs",
     "test:all": "pnpm run test && pnpm run test:mcp",

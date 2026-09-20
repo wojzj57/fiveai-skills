@@ -5,13 +5,18 @@
   "description": "FiveAI FiveM debug bridge resource - built and staged for deployment as fivem-plugin.",
   "type": "module",
   "scripts": {
-    "build": "node scripts/build-resource.mjs"
+    "build": "node scripts/build-resource.mjs",
+    "build:p0": "node scripts/build-p0-experiment.mjs",
+    "typecheck:p0": "tsc -p experiments/p0-http/tsconfig.json"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0",
     "fiveai-mcp": "workspace:*",
     "ws": "8.21.3"
   },
   "devDependencies": {
-    "esbuild": "0.28.2"
+    "@types/node": "22.18.1",
+    "esbuild": "0.28.2",
+    "typescript": "5.9.3"
   }
 }
