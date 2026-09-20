@@ -87,6 +87,7 @@ test("pnpm run pack produces the unified install directory and a single-root whi
   const pack = spawnSync("pnpm run pack", { shell: true, encoding: "utf8", cwd: workspaceRoot });
   assert.equal(pack.status, 0, `pack output: ${pack.stdout}\n${pack.stderr}`);
   assert.match(pack.stdout, /Unified artifact packed/);
+  assert.equal(existsSync(join(workspaceRoot, "dist", ".staging-fiveai-mcp")), false, "pack removes staging");
 
   for (const name of DELIVERY_NAMES) {
     assert.equal(existsSync(join(installDir, name.slice("fiveai-mcp/".length))), true, `${name} published`);
@@ -129,6 +130,7 @@ test("publish preserves local config, credentials, state, and user files byte-fo
     assert.equal(publish.status, 0, `publish stderr: ${publish.stderr}`);
     assert.match(publish.stdout, /Unified artifact published/);
     assert.equal(existsSync(zipPath), false, "publish does not generate a ZIP");
+    assert.equal(existsSync(join(workspaceRoot, "dist", ".staging-fiveai-mcp")), false, "publish removes staging");
     assert.equal(readFileSync(join(installDir, "mcp", "config.json"), "utf8"), sentinelConfig);
     assert.equal(readFileSync(join(installDir, "mcp", "credentials.json"), "utf8"), sentinelCredentials);
     assert.equal(readFileSync(join(installDir, "mcp", "state", "runtime.json"), "utf8"), sentinelState);
@@ -168,6 +170,7 @@ test("a failed orchestration exits non-zero, prints no success, and leaves prote
     assert.notEqual(failed.status, 0, "a missing source must fail the build");
     assert.doesNotMatch(failed.stdout, /Unified artifact published|packed/);
     assert.match(failed.stderr, /build-unified/);
+    assert.equal(existsSync(join(workspaceRoot, "dist", ".staging-fiveai-mcp")), false, "failed staging is removed");
     assert.equal(readFileSync(join(installDir, "mcp", "config.json"), "utf8"), sentinelConfig, "config preserved");
     assert.equal(readFileSync(join(installDir, "mcp", "credentials.json"), "utf8"), sentinelCredentials, "credentials preserved");
   } finally {

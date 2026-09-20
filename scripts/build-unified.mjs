@@ -9,7 +9,8 @@
  *                                             validated dist/fiveai-mcp.zip
  *
  * Both subcommands stage into dist/.staging-fiveai-mcp/ from the package
- * build outputs and the repository default config, after resolving and
+ * outputs temporarily; staging is removed on both success and failure.
+ * Staging uses the repository default config, after resolving and
  * verifying every staging/cleanup path inside the repository output root.
  * Publishing replaces only whitelisted program files (same-directory temp +
  * rename), preserves a local mcp/config.json byte-for-byte, and never reads,
@@ -47,6 +48,7 @@ const installDir = join(outputDir, "fiveai-mcp");
 const stagingDir = join(outputDir, ".staging-fiveai-mcp");
 const zipPath = join(outputDir, "fiveai-mcp.zip");
 const tempZipPath = join(outputDir, ".fiveai-mcp.zip.tmp");
+let stagingOwned = false;
 
 /**
  * The delivery whitelist (RFC §3, §7). Program files are replaced on every
@@ -135,6 +137,7 @@ function listFilesRecursive(root) {
  */
 function stageDelivery() {
   mkdirSync(outputDir, { recursive: true });
+  assertWithinOutput(stagingDir, "staging directory");
   if (existsSync(stagingDir)) {
     const stat = lstatSync(stagingDir);
     if (!stat.isDirectory() || stat.isSymbolicLink()) {
@@ -144,6 +147,7 @@ function stageDelivery() {
   }
   rmSync(stagingDir, { recursive: true, force: true });
   mkdirSync(stagingDir, { recursive: true });
+  stagingOwned = true;
 
   for (const file of DELIVERY_FILES) {
     const src = join(repoRoot, file.src);
@@ -276,7 +280,14 @@ function main() {
 }
 
 try {
-  main();
+  try {
+    main();
+  } finally {
+    if (stagingOwned) {
+      ensureRealDirectory(stagingDir, "staging directory");
+      rmSync(stagingDir, { recursive: true, force: true });
+    }
+  }
 } catch (error) {
   // A failed ZIP attempt removes only this run's temp file; the previous
   // final ZIP (if any) stays but is explicitly not this run's product.
