@@ -258,8 +258,9 @@ test("root command wiring keeps the unified orchestration and no test/build recu
   assert.match(manifest.scripts.pack, /pnpm run build/);
   assert.match(manifest.scripts.pack, /scripts\/build-unified\.mjs pack/);
   assert.equal(manifest.scripts["build:resource"], "pnpm run build", "build:resource is the unified build compatibility entry");
-  assert.match(manifest.scripts["test:mcp"], /^pnpm run build:resource/);
-  // The unified build never runs tests, and tests only ever invoke builds.
+  assert.equal(manifest.scripts["test:mcp"], "node tests/run-mcp-suite-fixture.mjs");
+  assert.equal(existsSync(join(repoRoot, "tests", "run-mcp-suite-fixture.mjs")), true, "the MCP suite runner is present");
+  // The unified build never runs tests; MCP tests build only inside their fixture.
   assert.doesNotMatch(manifest.scripts.build, /test/);
 });
 

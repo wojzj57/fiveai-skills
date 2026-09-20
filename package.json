@@ -19,7 +19,7 @@
     "pack": "pnpm run build && node scripts/build-unified.mjs pack",
     "build:resource": "pnpm run build",
     "test": "node --test --test-concurrency=1 \"tests/**/*.test.mjs\"",
-    "test:mcp": "pnpm run build:resource && pnpm --filter fiveai-mcp run test",
+    "test:mcp": "node tests/run-mcp-suite-fixture.mjs",
     "test:all": "pnpm run test && pnpm run test:mcp",
     "validate": "node scripts/validate-plugin.mjs"
   },

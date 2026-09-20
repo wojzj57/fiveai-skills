@@ -44,7 +44,12 @@ const SOURCE_DIRECTORIES = ["scripts", "packages"];
  * Test files copied into the fixture so the pack test can run there. The
  * preservation test is intentionally absent: fixtures must not recurse.
  */
-const TEST_FILES = ["tests/unified-pack.test.mjs", "tests/helpers/unified-fixture.mjs"];
+const TEST_FILES = [
+  "tests/run-mcp-suite-fixture.mjs",
+  "tests/unified-pack.test.mjs",
+  "tests/helpers/unified-fixture.mjs",
+  "tests/helpers/unified-fixture.d.mts",
+];
 
 function copyFileTree(source, target) {
   mkdirSync(target, { recursive: true });

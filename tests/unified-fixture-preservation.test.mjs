@@ -60,3 +60,31 @@ test("the unified pack test leaves the enclosing workspace's installed files unt
     fixture.dispose();
   }
 });
+
+test("the MCP test suite leaves the enclosing workspace's installed files untouched", () => {
+  const fixture = createUnifiedFixture(sourceRoot);
+  try {
+    const sentinels = new Map([
+      ["dist/server.js", Buffer.from("user-installed-program-sentinel")],
+      ["mcp/config.json", Buffer.from('{"userConfig":true}')],
+      ["mcp/credentials.json", Buffer.from("private-credential-sentinel")],
+      ["mcp/state/recovery.json", Buffer.from("pending-recovery-sentinel")],
+      ["notes.txt", Buffer.from("user-note-sentinel")],
+    ]);
+    for (const [name, bytes] of sentinels) {
+      const target = join(fixture.installDir, name);
+      mkdirSync(dirname(target), { recursive: true });
+      writeFileSync(target, bytes);
+    }
+    const child = spawnSync("pnpm run test:mcp", {
+      shell: true, windowsHide: true, cwd: fixture.root, encoding: "utf8",
+      env: childEnv, maxBuffer: 64 * 1024 * 1024, timeout: 10 * 60 * 1000,
+    });
+    assert.equal(child.status, 0, child.stdout + child.stderr);
+    for (const [name, bytes] of sentinels) {
+      assert.deepEqual(readFileSync(join(fixture.installDir, name)), bytes);
+    }
+  } finally {
+    fixture.dispose();
+  }
+});
