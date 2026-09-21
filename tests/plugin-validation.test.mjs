@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { globSync, readFileSync } from "node:fs";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -192,4 +193,28 @@ test("DeepSeek Harness bundle mounts the canonical skills directory", () => {
       patch,
     ).some((error) => error.includes("dsh.bundle.patch")),
   );
+});
+
+// The root test command reaches the package artifact tests through a literal
+// "fivem-mcp/tests/**/*.test.mjs" glob. A glob that matches nothing makes
+// `node --test` report "tests 0" and exit 0, so a future move of those files
+// would drop their coverage without any failure. This guard lives in the root
+// glob's own file on purpose: a guard inside the package tests would move with
+// them and stop running exactly when it is needed.
+test("every glob in the root test command still matches a test file", () => {
+  const manifest = JSON.parse(readFileSync(path.join(repoRoot, "package.json"), "utf8"));
+  const patterns = [...manifest.scripts.test.matchAll(/["']([^"']*\.test\.mjs)["']/g)].map(
+    (match) => match[1],
+  );
+
+  assert.ok(
+    patterns.length >= 2,
+    `the root "test" script must name its test globs in quotes: ${manifest.scripts.test}`,
+  );
+  for (const pattern of patterns) {
+    assert.ok(
+      globSync(pattern, { cwd: repoRoot }).length > 0,
+      `the root "test" script glob matches no files, so its tests are skipped silently: ${pattern}`,
+    );
+  }
 });

@@ -1,12 +1,14 @@
-# RFC：FiveM 资源内嵌 Streamable HTTP MCP
+# RFC：fivem-mcp 单包与资源内嵌 Streamable HTTP MCP
 
-日期：2026-09-20。状态：Draft — 产品方向已确认，技术契约待评审。本文仅用于设计，不授权实现、宿主操作、数据库写入、提交或发布。
+日期：2026-09-20。状态：技术修订待评审 — HTTP 产品方向和单包合并设计已获用户确认；不将本次新增接口提案或宿主可行性标为已批准、已实现或已验收。本文是 brainstorming 的 RFC 交付，不执行宿主操作、数据库写入、提交或发布。
 
-关联：[迁移方案与实施顺序](../specs/fivem-mcp-http-migration-design.md)。
+批准的合并设计：[单包合并与完整工具设计](../specs/2026-09-20-single-package-completion-design.md)。关联：[原 HTTP 迁移方案](../specs/fivem-mcp-http-migration-design.md)。模块根固定为 `.notes/fivem-mcp-http/`。
+
+本次修订把两个源码包合并到仓库根 `fivem-mcp/`，默认资源及 ZIP 同名；补齐全部 10 工具是同一交付的完成条件。第 12–15 节明确单包接口、迁移顺序及验收落点。第 2 节的旧源码路径是 `4d70464` 基线证据，不是目标目录。原迁移方案中的双包路径、旧产物命名和实施落点由本文修订替代。
 
 ## 1. 决策、目标与优先级
 
-在 FiveM 服务端资源的 Node 22 运行时启动 MCP HTTP Server，默认 `http://127.0.0.1:30130/mcp`。TypeScript 构建为 JS；资源停止则 HTTP 停止，宿主不在线时全部工具不可用。移除独立 stdio 入口、桌面 Broker、命名管道和内部 WebSocket。保留 10 个工具，任务与历史仅内存，无 Token 或身份鉴权。
+在 FiveM 服务端资源的 Node 22 运行时启动 MCP HTTP Server，默认 `http://127.0.0.1:30130/mcp`。TypeScript 构建为 JS；资源停止则 HTTP 停止，宿主不在线时全部工具不可用。移除独立 stdio 入口、桌面 Broker、命名管道和内部 WebSocket。保留并实现 10 个工具，任务与历史仅内存，无 Token 或身份鉴权。唯一工作区包是 `fivem-mcp`，位于 `D:\Exre\ex-fiveai\fivem-mcp`；不创建外部 Git 仓库。
 
 本 RFC 对以下历史文件有明确替代范围；历史原文保留，不回写其批准或实现状态：
 
@@ -36,15 +38,15 @@ FiveM 官方文档说明服务端支持 Node 模块及 Node 22，同时提示 li
 
 | 模块 | 责任 |
 | --- | --- |
-| `packages/mcp/src/http/`（拟新增） | MCP transport、Host/Origin 检查、会话与 HTTP 资源清理；不直接调用 native |
-| `packages/mcp/src/tools/` | 单一目录、严格输入/输出、业务路由、能力表达 |
-| `packages/mcp/src/scheduler/` | 每 resourceEpoch 共享一份内存 FIFO、任务缓存、取消及同代对账 |
-| `packages/mcp/src/execution/`（拟新增） | TS 编译、版本化执行计划、结果映射 |
-| `packages/fivem-plugin/server/` | 资源启动配置、HTTP 组装、host-tick 调度、服务端执行及客户端路由 |
-| `packages/fivem-plugin/client/`、`shared/` | 客户端绑定、ready/start/result/ack、Lua/JS 编码与执行 |
-| adapters/logs/reference（拟新增） | 业务白名单、日志内存缓存、随包资料与受限官方回退 |
+| `fivem-mcp/src/http/` | MCP transport、Host/Origin 检查、会话与 HTTP 资源清理；不直接调用 native |
+| `fivem-mcp/src/tools/` | 单一目录、严格输入/输出、业务路由、能力表达 |
+| `fivem-mcp/src/scheduler/` | 每 resourceEpoch 共享一份内存 FIFO、任务缓存、取消及同代对账 |
+| `fivem-mcp/src/execution/` | TS 编译、版本化执行计划、结果映射 |
+| `fivem-mcp/src/server/` | 资源启动配置、HTTP 组装、host-tick 调度、服务端执行及客户端路由 |
+| `fivem-mcp/src/client/`、`src/shared/`、`src/lua/` | 客户端绑定、ready/start/result/ack、Lua/JS 编码与执行；共享部分保持纯契约 |
+| `fivem-mcp/src/adapters/`、`src/logs/`、`src/reference/` | 业务白名单、日志内存缓存、随包资料与受限官方回退 |
 
-`packages/mcp` 成为可打包进资源的库，不是外部服务。HTTP 与宿主模块通过函数接口连接，不在同一进程内模拟旧 WebSocket 消息。共享 FIFO 跨 HTTP 会话和客户端目标，但不跨多个 FXServer；不同服务器必须使用不同端口。
+两个旧包不再保留独立 package.json；新包内以纯模块接口连接 HTTP 与宿主，不在同一进程内模拟旧 WebSocket 消息。共享 FIFO 跨 HTTP 会话和客户端目标，但不跨多个 FXServer；不同服务器必须使用不同端口。客户端产物不得引入服务端依赖。
 
 ## 4. HTTP 与会话契约
 
@@ -143,7 +145,7 @@ TS 编译器、source map 与 SQL parser 随服务端 bundle；不在游戏客�
 
 config v1 不静默解释为 v2：启动报告 `CONFIG_MIGRATION_REQUIRED`，由未来显式迁移命令/人工步骤备份旧配置，保留 serverLabel/clientLogDir/verifyEnabled，生成端口 30130 的 v2；不继承旧 broker.port=43189。新建安装使用默认 v2；正常 build 不覆盖已有配置。迁移工具的编写不属于本轮。
 
-部署顺序：停止旧 MCP 入口/Broker 和资源 → 验证已停止 → 备份程序及用户数据 → 部署新白名单与配置 → 删除仅已知退役程序 → 将客户端改为 HTTP → 启动资源 → 执行验收。现有工程链接 `D:\FiveM\Projects\Dev\resources\[exs]\fiveai-mcp` 可继续指向 `D:\Exre\ex-fiveai\dist\fiveai-mcp`；构建前应停止资源，避免 watcher 读取混合产物。未经指令不自动修改链接或停止宿主。
+部署顺序：停止旧 MCP 入口/Broker 和资源 → 验证已停止 → 备份程序及用户数据 → 部署新白名单与配置 → 删除迁移目标内仅已知退役程序 → 将客户端改为 HTTP → 启动资源 → 执行验收。新版候选产物为 `dist/fivem-mcp/` 和 `dist/fivem-mcp.zip`。现有工程链接 `D:\FiveM\Projects\Dev\resources\[exs]\fiveai-mcp` 指向旧 `dist/fiveai-mcp` 的关系不在普通构建中修改；迁移时可显式调整链接目标而保留自定义资源名，见第 14 节。未经指令不自动修改链接或停止宿主。
 
 旧 recovery 有 pending 时先明确其副作用不确定，再安排切换；不能把本次“不保存新任务”解释为自动清除旧执行风险。新架构不会导入或重放旧任务。
 
@@ -215,3 +217,183 @@ Codex 语法依据本机 `codex mcp add --help`；Claude Code 依据官方 HTTP 
 - 本地依据：SDK 1.30.0 `dist/esm/server/streamableHttp.d.ts`、工具输入与 limits、资源 manifest/构建脚本、旧 RFC 和本会话实测。
 
 本轮仅检查文档路径、相对链接、契约一致性及工作区变更范围；无新实现或宿主验收结论。
+
+## 12. 单包源码、构建与依赖迁移
+
+### 12.1 文件所有权
+
+| 原路径/职责 | 新路径/处理 |
+| --- | --- |
+| 两个 packages/*/package.json | 合成 `fivem-mcp/package.json`，名称 fivem-mcp；消除 fiveai-mcp workspace 自依赖 |
+| packages/mcp/src/tools | `fivem-mcp/src/tools`；新增带 handler 的定义和严格输出 |
+| packages/mcp/src/protocol 的工具、编码、输入预算 | `fivem-mcp/src/shared`；保留纯契约，移除桌面连接专属 envelope、恢复和 close code |
+| packages/mcp/src/scheduler | `fivem-mcp/src/scheduler`；修复队首选择、容量及缓存接口 |
+| packages/mcp/src/shared/config | `fivem-mcp/src/shared/config` 纯 schema；文件访问归 server，不把旧凭据读取迁入客户端共享模块 |
+| packages/mcp/src/cli、broker、凭据 helper | 生产退出时删除；不搬入新包作为兼容入口 |
+| packages/fivem-plugin/server、client | `fivem-mcp/src/server`、`src/client`；TS 编写，按宿主分开编译 |
+| packages/fivem-plugin/shared | JS 纯编码/执行公共部分归 src/shared，Lua 归 src/lua |
+| packages/fivem-plugin/experiments/p0-http | `fivem-mcp/experiments/p0-http`；P0 保持独立，不入 ZIP |
+| 两包测试、根 MCP 构建/打包测试与 helpers | `fivem-mcp/tests`；按 unit/http/host/artifact 分层，移除旧生产管道依赖 |
+| scripts/build-identity、build-unified 与资源构建脚本 | `fivem-mcp/scripts`；统一源码 manifest、产物白名单和 fixture API |
+| 根 scripts/validate-plugin、skills 测试 | 继续归仓库根，不并入 MCP |
+
+目标文件布局遵循批准设计第 3 节。`fivem-mcp-main/` 及 skills 不是合并输入。
+根 pnpm-workspace.yaml 显式列出 fivem-mcp，移除已不存在的旧包入口；
+使用根唯一 pnpm-lock.yaml 管理依赖，不另外生成嵌套 lockfile。
+“单包独立构建”指在 workspace 安装后可按 filter 单独运行，不承诺复制裸源码目录后脱离 lockfile 安装。
+
+### 12.2 命令与产物
+
+- 新包提供 typecheck、build、test、pack、build:p0、typecheck:p0；根同名 MCP 编排命令委托新包。
+- build 只写 `fivem-mcp/dist` 的中间程序产物，不发布到现有安装；根 build:resource 是该命令别名。
+- pack 先构建，在唯一临时 staging 按白名单组装、验证，再生成根 dist 下 fivem-mcp 候选目录和 ZIP。
+- 已存在候选目录必须确认是构建器拥有且未部署的输出；若含运行配置、凭据、state、未知用户文件或作为已知工程链接目标，则拒绝替换并要求选择新的候选输出路径。不以清空目录处理冲突。
+- 自动化的完整 workspace、候选目录、端口都位于测试 fixture；测试不得调用真实安装的更新命令。
+- 不把已在运行的 FXServer 路径当作候选输出；迁移和部署是单独操作。
+
+ZIP 根为 fivem-mcp，至少包含 fxmanifest.lua、README.md、dist/server.js、dist/client.js、
+shared/executor.lua、mcp/config.json，以及 manifest 明列的 worker/Lua 适配/data 文件。
+源码 Lua 可位于 src/lua，打包路径由固定映射决定。禁止将整个源码树通配复制入 ZIP。
+客户端 files/client_scripts 清单仅包含其实际执行依赖。
+
+MCP SDK、Zod、TypeScript Compiler API、SQL parser/source-map 运行依赖由服务端/worker bundle
+自包含；esbuild 是构建工具。不继承 Fastify/WebSocket 依赖仅为保留旧代码，按目标 import 图裁剪。
+锁定版本沿用基线，新增依赖先验证其固定版本与独立 ZIP；不借迁移升级到 latest。
+buildId 对源码、依赖锁、manifest、构建脚本、worker、适配与参考数据计算确定性摘要，
+不读取 Git、用户配置、凭据或旧 state。
+
+## 13. 模块接口与公共返回契约
+
+以下是本次技术修订的规范接口要求，名称允许在不改变语义的前提下随实现整理。
+所有模块通过 server/bootstrap 的显式依赖组装共享服务；每个 HTTP 会话不创建独立队列。
+
+### 13.1 服务接口
+
+| 接口 | 输入 → 输出 | 不变量 |
+| --- | --- | --- |
+| ToolDefinition | name、description、inputSchema、outputSchema、handler(ctx,input) | 同一定义用于发现、校验、调用与输出校验；handler 必须存在 |
+| ToolContext | resourceEpoch、sessionId、requestId、协商能力、请求取消信号 | 取消信号不能直接取消已接收任务；SQL 待确认阶段例外见 §6.4 |
+| HostDispatcher.run | 捕获 epoch、同步宿主操作 → Promise 结果 | tick 执行前重查 epoch/停止状态；返回 Promise 不使其后续 native 自动安全 |
+| TaskService.submit | 已校验输入、会话、绑定 → TaskView | 同步分配 sequence/容量，任务状态先于异步编译或执行可见 |
+| TaskService.get/list/cancel/reconcile | taskId、owner/limit → 严格任务或控制结果 | FIFO 队首不取自裁剪后的 list；cancel 仅 queued 原会话；reconcile 只读取证据 |
+| ExecutionService.prepare | taskId、绑定、输入、剩余预算 → ExecutionPlan | 无游戏副作用；只在 FIFO 队首做 TS 编译；超时可证未派发 |
+| ExecutionService.start/query | 不可变计划与绑定 → 匹配终态/运行证据 | 唯一 start 许可；校验 client source、challenge、epoch 和摘要 |
+| AdapterRegistry.resolve | tool/library/side/scope/method → 类型化描述项或错误 | 精确白名单；无任意属性路径反射；执行前检查资源 generation |
+| ApprovalService.confirm | 原会话、不可变 databaseCall、绑定 → 单次确认或错误 | 待确认不占 FIFO；批准后先重查代际，再入队；不重新改写 SQL/参数 |
+| LogService.query / ReferenceService.search | 已校验过滤/查询 → 有界结果 | 数据来源、缺口、版本和截断可见；不虚构命中或采集覆盖 |
+
+资源停止先置停止标志和失效 epoch guard，再关闭监听与 worker；迟到 Promise 回调不重新提交任务。
+host-tick 的一次入场只保证同步操作阶段：await 后再次调用 native 必须经调度，不能把任意 JS
+Promise continuation 都宣传为宿主线程。执行器应提供明确可用的 host 调度 helper 并在工具说明中说明边界。
+
+### 13.2 工具输出
+
+公共对象都采用严格 schema。`structuredContent` 总是对象，文本回退为同对象的 JSON。
+HTTP/JSON-RPC 协议错误交给 transport；已知工具业务失败返回 isError=true，不断开会话。
+
+通用错误对象为 `{error:{code,message,retrySafe,sideEffectsUnknown},resourceEpoch,task?}`。
+无副作用的输入/能力错误为 sideEffectsUnknown=false；不确定执行为 true 且 retrySafe=false。
+结构化失败的 executionCompleted/noRemoteExecution 沿用既有互斥证据规则。
+输出 schema 校验失败是内部错误；若实际操作可能已经开始，不得标记为未执行或鼓励重试。
+
+任务响应为 `{resourceEpoch,retention:"memory-only",task:TaskView}`。
+TaskView 包含 taskId、sequence、tool、state、target、queuedMs、executionMs、resultAvailable；
+target 包含 side、实际 resourceName/resourceEpoch，以及目标为客户端时的 clientId/clientEpoch，
+适配/资源操作另带目标资源 generation。它不携带原代码、SQL、args、challenge 或会话能力。
+可用成功负载是按 tool 判别的严格联合：执行值、适配投影或资源变更结果；不能把所有工具都强塞进 language/value。
+失败负载包含 error 和 evidence，unknown 仅保存观测错误而没有终态完成证据。
+
+| 返回类别 | 必需内容 |
+| --- | --- |
+| status | resourceEpoch/buildId/resourceName、HTTP 地址与生命周期、sessionCount、绑定 clients、真实 queue、retention、框架能力、日志覆盖、有效 limits |
+| queue status 列表 | task 数组按 sequence 顺序、队列计数、activeTaskId、truncated；limit 只影响展示 |
+| queue status 单项 / recover | TaskView；找不到返回 TASK_NOT_FOUND 和当前 epoch，不把历史遗忘当作从未执行 |
+| queue cancel | cancelled 与当前 TaskView；无权、已派发或不存在时明确错误，不返回伪成功 |
+| resource list/status | name/state/generation、source=live 或 cached、observedAt；list 返回数组 |
+| resource 变更终态 | before/after、action、stop/start 各阶段观测及完成证据；started 不等于业务 ready |
+| logs | records、coverage、gaps、truncated；record 字段按继承的日志契约 |
+| reference | matches、来源/版本、fallback 是否使用、truncated；无命中与在线失败分开表达 |
+
+queued/running 在同步等待结束时以 isError=false 返回可查询 taskId；succeeded 同样为 false。
+failed/unknown 以 isError=true 返回任务快照和错误；cancel 操作成功仍为 false。
+缓存淘汰按完整终态记录进行，过期 taskId 返回 TASK_NOT_FOUND，
+不保留无限条无结果壳记录。running/unknown 和未完成 ack 的单个客户端结果不参与普通 TTL 淘汰。
+
+### 13.3 客户端证据与时序
+
+执行绑定以 resourceEpoch、实际资源名、clientId/clientEpoch、taskId、planDigest 标识，
+替代旧 Broker/bridgeInstance 身份；重启不导入旧身份。
+服务端生成计划摘要并核验完整结果摘要，算法及 JCS 测试向量继承全量 RFC §6.5；
+输入字段中的 Broker/entrySession 改为当前 resourceEpoch/HTTP session，域分离不变。
+摘要字段集合集中声明在 shared/digests，HTTP 同进程函数调用不重新套旧 wire envelope。
+
+新 binding 严格区分 server/client：共同字段为 resourceEpoch、resourceName；client 分支追加
+clientId、clientEpoch；目标业务资源存在时追加 targetResource 和 targetGeneration，否则省略。
+payload 摘要固定覆盖 `{taskId,tool,requestId,binding,executionPlan,timeoutMs}`；
+result 摘要覆盖 `{taskId,binding,payloadDigest,executedBy,executionMs,outcome}`；
+approval 摘要覆盖 `{approvalId,requestId,sessionId,databaseCall,binding,oxmysqlGeneration,expiresAt,configDigest}`。
+适配 manifest 摘要及既有域标签沿用旧契约，不因包重命名任意更改。
+客户端输入不接受 sessionId、SQL 审批正文或 configDigest 等服务端专属数据。
+
+客户端 prepared → ready → start → result → ack 均核验绑定。
+服务端在内存置 start-issued 后发出一次 start；可能已发出之后的超时变 unknown。
+若准备失败且可证从未产生 start，可结算失败并释放槽；无此证据则保持阻塞。
+终态先进入服务端内存 task store，再 ack 客户端。结果重复发送只重复确认，不重复执行。
+本代 ack tombstone 有界，记录淘汰后的未知 taskId 的 start 一律拒绝；只有当前 prepared 记录
+能消费一次 start，因此淘汰 tombstone 不使旧 start 再次执行。
+客户端有旧执行未终结时，新绑定不能报告空闲，也不得接受下一次副作用 start。
+
+框架完整方法清单、逐方法参数及投影继承全量 RFC §9；TS 语法限制和 source-map 规则继承 §8.2，
+编译位置改为宿主内 worker；日志与资料业务规则继承 §11。本段不继承磁盘恢复、
+Broker 进程身份、entry 断开取消 queued 或日志跨 WebSocket 批发规则。
+
+## 14. 落地顺序、迁移和回退
+
+| 顺序 | 责任模块 | 可复核退出条件 |
+| --- | --- | --- |
+| 1 宿主可行性 | P0 实验与 host 验证记录 | HTTP initialize/native、worker、stop/start 重绑有实际宿主证据；失败先修订技术路线 |
+| 2 包合并和契约 | package/scripts/shared/http/server | 单包 typecheck/build；v2 配置和会话测试；客户端依赖图无服务端泄露 |
+| 3 执行闭环 | scheduler/execution/client/lua | 双端 Lua/TS、唯一 FIFO、取消、unknown、迟到结果和限额测试 |
+| 4 全工具 | tools/adapters/logs/reference | 逐工具正向 handler；全部方法清单映射；缺依赖、SQL 确认和日志降级有明确结果 |
+| 5 旧架构退出 | 删除 cli/broker、旧管道测试、旧构建引用 | 目标源码不再引用两旧包；ZIP 无桌面程序；运行不启动外部 MCP Node |
+| 6 全量验收 | artifact/host/client 矩阵 | A/H/C 和下述 M 项逐项出证据；未执行项不转换为 PASS |
+
+合并阶段可以迁入现有纯模块并暂存过渡源码，但最终分支交付不能包含重复包 manifest、
+占位 handler 或仍在打包的旧入口。内部提交顺序不改变“一次完整交付”的范围。
+
+构建迁移不自动部署。迁移前核查候选目录、旧安装真实路径、工程链接及运行进程；
+有旧 pending 时记录其不确定副作用，不清理或重放。
+配置转换必须保留原字节备份，v2 只继承 serverLabel/clientLogDir/verifyEnabled，
+新 http.port 默认 30130，不复制 broker.port。相对 clientLogDir 若因移动目录改变含义，
+转换时按旧配置位置解析后保持指向同一来源；无法确认则停止迁移而非悄悄换日志源。
+
+原安装作为回退备份保留。迁移到新目录时新白名单本来就不含退休程序；若显式选择原位迁移，
+仅删除经核对的 entry.mjs、broker.mjs、windows-files.ps1，且先备份。
+配置、credentials、state 和未知文件不在清理范围。
+部署程序失败、配置迁移失败、HTTP 无法启动、端口不释放或关键调用验证失败时停止切换；
+恢复旧目录/链接、v1 配置和客户端 stdio 条目。旧架构再启动须仍满足其凭据/恢复约束，
+不能用回退表示新版已执行副作用被撤销。
+
+## 15. 验收落点与未决技术验证
+
+| ID | 落点（拟建于 fivem-mcp/tests） | 必测契约 |
+| --- | --- | --- |
+| M01 | artifact/workspace.test | 唯一包、锁文件关系、旧源码引用消失，根命令只委托新包 |
+| M02 | artifact/package.test | 隔离构建、白名单、worker/data 自包含、无 node_modules 独立加载、无客户端泄露 |
+| M03 | artifact/migration.test | 新候选路径、拒绝用户目录覆盖、配置备份/转换、退休程序精确清理、回退、数据哨兵 |
+| A01–A03 | unit/config、http/sessions、http/tools | v2/HTTP 边界、GET SSE/DELETE、多会话；逐个工具真实 handler 调用及输出 schema |
+| A04–A07 | unit/scheduler、host/execution、http/tasks | 超过1000条历史后的队首、100 queued 拒绝、unknown 不淘汰、多会话、双端编码/编译、重启遗忘 |
+| A08 | host/resource、host/adapters、http/approval | 自保护、状态观测、完整适配清单、确认拒绝/过期/代际变更与写入成功 |
+| A09 | unit/logs、unit/reference、host/logs | 过滤/轮转/唯一标记/读失败、离线命中、受限回退及来源 |
+| H01–H07 | host 验收记录 | 真 FXServer/FiveM、框架分别运行、worker 与客户端日志能力，独立 ZIP 与真实副作用顺序 |
+| C01–C03 | 客户端验收记录 | 记录实际客户端版本，HTTP 协商、10工具调用、重连、form 支持或明确拒绝 |
+
+模拟宿主测试使用运行时 guard 捕获 off-tick native；不能替代 H 项。
+公共端到端测试必须跨 HTTP 调用到注入的宿主接口，并断言最终状态/副作用；
+不得把 tools/list 长度、schema parse 或统一 unavailable 返回当作工具实现证明。
+
+当前未决的是实测证据，而非重新选择产品范围：P0 的 SDK/worker/停止兼容性、
+真实日志文件读取、框架安装版本与全部方法正向行为、三客户端 form 支持。
+责任由后续对应实现及验收任务承担，在相关阶段退出前给出证据；若失败需要改变公共契约，
+回到 RFC 修订，不默认砍工具或恢复外部进程。
+本文不虚构各验证项通过，也不把先前被外部生产 Broker 干扰的旧进程测试结果作为新架构回归基线。

@@ -15,13 +15,13 @@
     }
   },
   "scripts": {
-    "build": "pnpm --filter fiveai-mcp run build && pnpm --filter fivem-plugin run build && node scripts/build-unified.mjs publish",
-    "pack": "pnpm run build && node scripts/build-unified.mjs pack",
-    "build:resource": "pnpm run build",
-    "build:p0": "pnpm --filter fivem-plugin run build:p0",
-    "typecheck:p0": "pnpm --filter fivem-plugin run typecheck:p0",
-    "test": "node --test --test-concurrency=1 \"tests/**/*.test.mjs\"",
-    "test:mcp": "node tests/run-mcp-suite-fixture.mjs",
+    "build": "pnpm --filter fivem-mcp run build",
+    "pack": "pnpm --filter fivem-mcp run pack",
+    "build:resource": "pnpm --filter fivem-mcp run pack",
+    "build:http": "pnpm --filter fivem-mcp run build:http",
+    "typecheck:http": "pnpm --filter fivem-mcp run typecheck:http",
+    "test": "node --test --test-concurrency=1 \"tests/**/*.test.mjs\" \"fivem-mcp/tests/http-mcp*.test.mjs\"",
+    "test:mcp": "pnpm --filter fivem-mcp run test:fixture",
     "test:all": "pnpm run test && pnpm run test:mcp",
     "validate": "node scripts/validate-plugin.mjs"
   },
