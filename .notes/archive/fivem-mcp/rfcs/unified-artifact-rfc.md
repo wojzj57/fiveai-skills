@@ -147,6 +147,16 @@ manifest 的 server_scripts 仅加载 executor 和 Server bundle；client_script
 
 ## 7. build/pack 文件所有权
 
+> **替代说明（2026-09-21）**：本节的「build 更新已有目录」分工已被
+> `.notes/fivem-mcp-http/rfcs/fivem-resource-http-mcp-rfc.md` §12.2 与
+> `.notes/fivem-mcp-http/specs/2026-09-20-single-package-completion-design.md` §5 取代。
+> 现行契约：`build` 只写包的 `fivem-mcp/dist` 中间产物，不发布；候选目录
+> `dist/fivem-mcp/` 与 ZIP 由 `pack` 独占。候选目录已存在时，只有仍属构建器拥有且未被使用的输出
+> 才可复用；一旦发现凭据文件、非空 `state/`、与仓库默认不同的 `config.json`，或任何白名单外文件，
+> 就**拒绝替换并提示改用新的候选输出路径**，绝不清空该目录。下表中 config/credentials/state 与用户文件的
+> 「逐字节保留」承诺因此改由「拒绝」兑现，而不是「就地覆盖」——数据保留的强度不变，build 不再就地更新。
+> 下表保留原始状态作为历史记录。
+
 交付文件清单定义在构建源码中，以同一份白名单驱动 staging、发布和 ZIP 校验。程序文件与默认 config 明确区分。
 
 | 内容 | build 更新已有目录 | ZIP 来源 |
