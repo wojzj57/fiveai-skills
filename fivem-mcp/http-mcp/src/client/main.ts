@@ -1,0 +1,54 @@
+import { ClientProtocol } from "./protocol.ts";
+
+interface ClientGlobals {
+  source?: number;
+  GetCurrentResourceName(): string;
+  onNet(eventName: string, handler: (raw: unknown) => void): void;
+  emitNet(eventName: string, raw: string): void;
+  emit(eventName: string, raw: string): void;
+  on(eventName: string, handler: (...args: unknown[]) => void): void;
+  setTick(handler: () => void): void;
+}
+
+function uuid(): string {
+  const bytes = new Uint8Array(16);
+  const cryptoValue = (globalThis as { crypto?: { getRandomValues?(array: Uint8Array): Uint8Array } }).crypto;
+  if (cryptoValue?.getRandomValues) cryptoValue.getRandomValues(bytes);
+  else {
+    const seed = Date.now() ^ Math.floor(Math.random() * 0x7fffffff);
+    for (let index = 0; index < bytes.length; index += 1) bytes[index] = Math.floor(Math.random() * 256) ^ (seed >>> (index % 4));
+  }
+  bytes[6] = ((bytes[6] ?? 0) & 0x0f) | 0x40;
+  bytes[8] = ((bytes[8] ?? 0) & 0x3f) | 0x80;
+  const hex = [...bytes].map((value) => value.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+const host = globalThis as unknown as ClientGlobals;
+const resourceName = host.GetCurrentResourceName();
+const prefix = `${resourceName}:mcp:v1:`;
+const protocol = new ClientProtocol({
+  resourceName,
+  clientEpoch: uuid(),
+  send: (eventName, raw) => host.emitNet(eventName, raw),
+  sendLocal: (eventName, raw) => host.emit(eventName, raw),
+  executeJs: async (code, args) => {
+    const create = new Function(`return (${code});`) as () => (args: unknown) => unknown;
+    return [await create()(args)];
+  },
+});
+
+for (const type of ["bind", "execute", "terminalAck", "probe"] as const) {
+  host.onNet(`${prefix}${type}`, (raw) => {
+    const copiedSource = Number(host.source);
+    if (typeof raw === "string") protocol.receive(copiedSource, type, raw);
+  });
+}
+host.on(`${prefix}local:clientLuaReady`, (raw) => {
+  if (typeof raw === "string") protocol.luaReady(raw);
+});
+host.on("onClientResourceStop", (name) => {
+  if (name === resourceName) protocol.stop();
+});
+host.setTick(() => protocol.tick());
+protocol.start();

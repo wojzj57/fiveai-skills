@@ -20,7 +20,7 @@
     "build:resource": "pnpm --filter fivem-mcp run pack",
     "build:http": "pnpm --filter fivem-mcp run build:http",
     "typecheck:http": "pnpm --filter fivem-mcp run typecheck:http",
-    "test": "node --test --test-concurrency=1 \"tests/**/*.test.mjs\" \"fivem-mcp/tests/http-mcp*.test.mjs\"",
+    "test": "node --test --test-concurrency=1 \"tests/**/*.test.mjs\" \"fivem-mcp/tests/**/*.test.mjs\"",
     "test:mcp": "pnpm --filter fivem-mcp run test:fixture",
     "test:all": "pnpm run test && pnpm run test:mcp",
     "validate": "node scripts/validate-plugin.mjs"

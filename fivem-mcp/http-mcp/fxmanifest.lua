@@ -1,5 +1,4 @@
 -- FiveAI local Streamable HTTP MCP resource.
--- Server-only by design: this resource does not touch the game client.
 fx_version 'cerulean'
 game 'gta5'
 node_version '22'
@@ -8,4 +7,8 @@ author 'FiveAI'
 description 'FiveAI local Streamable HTTP MCP server'
 version '0.0.1'
 
-server_scripts { 'dist/server.js' }
+shared_script 'lua/adapters.lua'
+
+server_scripts { 'lua/server.lua', 'dist/server.js' }
+
+client_scripts { 'lua/client.lua', 'dist/client.js' }

@@ -1,0 +1,7 @@
+FiveAI HTTP MCP reference snapshot
+
+The six offline entries are original factual summaries referencing the pinned upstream revisions in data/reference.json, not copies of full upstream documents. contentHash identifies the fetched upstream source bytes. This is a small offline core, not a complete native database.
+
+Sources: citizenfx/natives, citizenfx/fivem, citizenfx/fivem-docs. Copyright belongs to their respective contributors / Take-Two Interactive. The fivem repository license is reproduced at data/LICENSE-fivem.txt. No standalone LICENSE was located at the pinned roots of natives or fivem-docs; their original text is not redistributed.
+
+Bundled software: TypeScript (Apache-2.0), MCP SDK (MIT), Zod (MIT), Ajv (MIT), ajv-formats (MIT), plus transitive SDK dependencies. Their distribution license texts are included in data/licenses/.

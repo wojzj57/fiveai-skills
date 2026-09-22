@@ -21,6 +21,18 @@ declare function GetCurrentResourceName(): string;
 declare function GetResourceState(resourceName: string): string;
 declare function GetNumResources(): number;
 declare function GetGameTimer(): number;
+/**
+ * Absolute filesystem path of a resource (RFC §8.1). It is an execution native
+ * over live host state, so it is only ever called from the host tick — the
+ * compiler module's file path is resolved that way.
+ */
+declare function GetResourcePath(resourceName: string): string;
+declare function emit(eventName: string, ...args: unknown[]): void;
+declare function RegisterConsoleListener(handler: (channel: string, message: string) => void): void;
+declare function GetResourceByFindIndex(index: number): string;
+declare function StartResource(name: string): boolean;
+declare function StopResource(name: string): boolean;
+declare function GetResourceMetadata(name: string, key: string, index: number): string | null;
 
 /** Registers a per-frame host-thread callback; the only place natives may run. */
 declare function setTick(handler: () => void): void;
@@ -34,3 +46,8 @@ declare function RegisterCommand(
   handler: (source: number, args: string[], rawCommand: string) => void,
   restricted?: boolean,
 ): void;
+
+declare function onNet(event:string,handler:(...args:unknown[])=>void):void;
+declare function emitNet(event:string,clientId:number,...args:unknown[]):void;
+
+declare function GetPlayerName(id:string):string|null;

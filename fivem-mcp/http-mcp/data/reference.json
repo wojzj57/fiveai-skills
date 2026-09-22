@@ -1,0 +1,62 @@
+[
+  {
+    "name": "PLAYER_PED_ID",
+    "category": "native",
+    "side": "client",
+    "summary": "Returns the ped handle associated with the local player.",
+    "sourceUrl": "https://github.com/citizenfx/natives/blob/7263f2118982857a08787f81045fbdc3defa1d70/PLAYER/PlayerPedId.md",
+    "revision": "7263f2118982857a08787f81045fbdc3defa1d70",
+    "contentHash": "fad36663d410b525ebadb793f4fb1f15e8da6c07236fea2571fc208eed5f90a9",
+    "source": "offline"
+  },
+  {
+    "name": "GET_ENTITY_COORDS",
+    "category": "native",
+    "side": "client",
+    "summary": "Reads the world coordinates of an entity.",
+    "sourceUrl": "https://github.com/citizenfx/natives/blob/7263f2118982857a08787f81045fbdc3defa1d70/ENTITY/GetEntityCoords.md",
+    "revision": "7263f2118982857a08787f81045fbdc3defa1d70",
+    "contentHash": "eb65a9df6182b4955070c713ebd2658b4ac060c54e19890a2f34abb8c1e224ce",
+    "source": "offline"
+  },
+  {
+    "name": "GET_CURRENT_RESOURCE_NAME",
+    "category": "native",
+    "side": "shared",
+    "summary": "Returns the name of the resource in which the script is running.",
+    "sourceUrl": "https://github.com/citizenfx/fivem/blob/0d8a2a6f78a9922445d8930305af82a7b1826980/ext/native-decls/GetCurrentResourceName.md",
+    "revision": "0d8a2a6f78a9922445d8930305af82a7b1826980",
+    "contentHash": "699048edb04597a846442d1c08f73a7fbb810223909fa9ea483da7b24c365f01",
+    "source": "offline"
+  },
+  {
+    "name": "START_RESOURCE",
+    "category": "native",
+    "side": "server",
+    "summary": "Requests that the server start a named resource. Observe resource state before assuming startup has finished.",
+    "sourceUrl": "https://github.com/citizenfx/fivem/blob/0d8a2a6f78a9922445d8930305af82a7b1826980/ext/native-decls/StartResource.md",
+    "revision": "0d8a2a6f78a9922445d8930305af82a7b1826980",
+    "contentHash": "340af009ac20bba6a0efd5ef25dbe1cb461c8eda62929f9ec509fb976a1048a8",
+    "source": "offline"
+  },
+  {
+    "name": "onResourceStart",
+    "category": "event",
+    "side": "shared",
+    "summary": "Lifecycle event raised when a resource starts; its argument identifies the resource.",
+    "sourceUrl": "https://github.com/citizenfx/fivem-docs/blob/e8113b64d6ea295a3ec531aebc5e6b8bc2ceb212/content/docs/scripting-reference/events/list/onResourceStart.md",
+    "revision": "e8113b64d6ea295a3ec531aebc5e6b8bc2ceb212",
+    "contentHash": "303a51c49c8eb5bb16acbcc854ea15d4c3c7a56ab9bd6158423335a07fe2f16e",
+    "source": "offline"
+  },
+  {
+    "name": "Scripting in JavaScript",
+    "category": "guide",
+    "side": "shared",
+    "summary": "JavaScript resources use FiveM globals and exports. Node APIs are server-only; after asynchronous Node work, schedule native calls on the host thread.",
+    "sourceUrl": "https://github.com/citizenfx/fivem-docs/blob/e8113b64d6ea295a3ec531aebc5e6b8bc2ceb212/content/docs/scripting-manual/runtimes/javascript.md",
+    "revision": "e8113b64d6ea295a3ec531aebc5e6b8bc2ceb212",
+    "contentHash": "9905c1a1052dd01709d8b599c112dde91b613257edcf6f90c10f17bc021bff6d",
+    "source": "offline"
+  }
+]

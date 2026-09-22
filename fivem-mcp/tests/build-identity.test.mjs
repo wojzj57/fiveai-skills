@@ -36,8 +36,14 @@ test("the same source in different directories (no .git) yields one identity", (
     // The source repository — with its .git, node_modules, dist/, and
     // artifact/ trees — hashes identically to a bare copy of the inputs.
     assert.equal(getBuildIdentity(sourceRoot).buildId, identityA.buildId);
-    // Identity policy: fivem-mcp/<package version>/<sha256 hex>.
+    // Identity policy: the prefixed form is fivem-mcp/<package version>/<sha256
+    // hex> for the retiring desktop consumers, and `digest` carries the same
+    // SHA-256 alone — the shape the runtime-debug contract's status.buildId
+    // requires (`^[a-f0-9]{64}$`).
     assert.match(identityA.buildId, new RegExp(`^fivem-mcp/${identityA.packageVersion}/[0-9a-f]{64}$`));
+    assert.match(identityA.digest, /^[0-9a-f]{64}$/);
+    assert.equal(identityA.buildId, `fivem-mcp/${identityA.packageVersion}/${identityA.digest}`);
+    assert.equal(identityA.digest, identityB.digest, "the digest is deterministic too");
   } finally {
     fixtureB.dispose();
     fixtureA.dispose();

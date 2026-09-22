@@ -18,13 +18,15 @@
     "build:legacy": "pnpm run build:contracts && pnpm run build:entry && pnpm run build:broker && pnpm run build:bundle",
     "typecheck": "pnpm run build:identity && tsc --noEmit",
     "typecheck:http": "tsc -p http-mcp/tsconfig.json",
-    "pack": "pnpm run build",
-    "test": "pnpm run typecheck:http && node --test tests/http-mcp-artifact.test.mjs tests/http-mcp.test.mjs",
+    "pack": "pnpm run typecheck:http && node scripts/build-http-mcp.mjs --pack",
+    "test": "pnpm run typecheck:http && node --test tests/fixture-isolation.test.mjs tests/build-identity.test.mjs tests/http-*.test.mjs",
     "test:fixture": "node tests/run-mcp-suite-fixture.mjs"
   },
   "dependencies": {
     "@fastify/websocket": "11.3.0",
     "@modelcontextprotocol/sdk": "1.30.0",
+    "ajv": "8.20.0",
+    "ajv-formats": "3.0.1",
     "fastify": "5.12.3",
     "ws": "8.21.3",
     "zod": "4.5.4"

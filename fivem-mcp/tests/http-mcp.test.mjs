@@ -11,7 +11,7 @@
  * fivem-mcp/http-mcp/README.md.
  *
  * The probe listens on the RFC-frozen default port 30130 unless
- * FIVEAI_MCP_HTTP_PORT says otherwise. The suite takes an ephemeral port so it
+ * config/config.json overrides it. The suite takes an ephemeral port so it
  * never fights a server the operator already has running; the frozen defaults
  * themselves are asserted directly against the source of ./frozen.ts.
  */
@@ -19,16 +19,25 @@
 import test, { after, before } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { mkdtemp, rm, writeFile, mkdir } from "node:fs/promises";
 import { createServer, request as httpRequest } from "node:http";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { createFiveMHost } from "./helpers/fivem-host-shim.mjs";
 
 const repoRoot = fileURLToPath(new URL("../../", import.meta.url));
-const bundlePath = join(repoRoot, "fivem-mcp", "artificials", "fivem-mcp", "dist", "server.js");
+/**
+ * The suite builds into a throwaway directory (RFC §12: "测试只能使用临时
+ * fixture 输出，不能运行默认 build 覆盖已挂载目录"). The default output
+ * `fivem-mcp/artificials/fivem-mcp` is what an operator links into FxDK, so a
+ * test must never replace it.
+ */
+let buildRoot = null;
+let bundlePath = null;
 
-const { FROZEN, isAllowedHost, isAllowedOrigin, resolveHttpPort } = await import(
+const { FROZEN, isAllowedHost, isAllowedOrigin } = await import(
   new URL("../../fivem-mcp/http-mcp/src/frozen.ts", import.meta.url).href
 );
 
@@ -77,7 +86,7 @@ function request({ method = "POST", path = "/mcp", headers = {}, body, hostHeade
           resolve({
             status: res.statusCode,
             headers: res.headers,
-            text: Buffer.concat(chunks).toString("utf8"),
+            text: res.headers['content-type']?.includes('text/event-stream') ? Buffer.concat(chunks).toString('utf8').split('\n').filter(line=>line.startsWith('data: ')).at(-1)?.slice(6)??'' : Buffer.concat(chunks).toString('utf8'),
           }),
         );
       },
@@ -122,45 +131,95 @@ function callTool(name, session, args = {}) {
   return rpc("tools/call", { name, arguments: args }, { id: 9, session });
 }
 
-before(async () => {
-  const build = spawnSync(process.execPath, [join(repoRoot, "fivem-mcp", "scripts", "build-http-mcp.mjs")], {
-    cwd: repoRoot,
-    encoding: "utf8",
+/** JSON-RPC error code of a protocol-level refusal. */
+function rpcErrorCode(response) {
+  return JSON.parse(response.text).error?.code;
+}
+
+/**
+ * A deliberately incomplete request: announce a body, send part of it, then
+ * stop without ending or destroying the socket.
+ */
+function rawRequest({ declaredLength, body }) {
+  return new Promise((resolve, reject) => {
+    const req = httpRequest(
+      {
+        host: "127.0.0.1",
+        port,
+        method: "POST",
+        path: "/mcp",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+          "content-length": String(declaredLength),
+        },
+        agent: false,
+      },
+      (res) => {
+        const chunks = [];
+        res.on("data", (chunk) => chunks.push(chunk));
+        res.on("end", () =>
+          resolve({
+            status: res.statusCode,
+            headers: res.headers,
+            text: Buffer.concat(chunks).toString("utf8"),
+          }),
+        );
+      },
+    );
+    req.on("error", reject);
+    req.write(body);
+    // Intentionally never end(): the read budget must expire instead.
   });
+}
+
+before(async () => {
+  buildRoot = await mkdtemp(join(tmpdir(), "fiveai-http-mcp-suite-"));
+  const artifact = join(buildRoot, "fivem-mcp");
+  const build = spawnSync(
+    process.execPath,
+    [join(repoRoot, "fivem-mcp", "scripts", "build-http-mcp.mjs"), "--out", artifact],
+    { cwd: repoRoot, encoding: "utf8" },
+  );
   assert.equal(build.status, 0, `building the HTTP MCP resource failed:\n${build.stdout}\n${build.stderr}`);
+  bundlePath = join(artifact, "dist", "server.js");
 
   port = await reserveFreePort();
-  host = createFiveMHost({ bundlePath, env: { FIVEAI_MCP_HTTP_PORT: String(port) } });
+  // `resourcePath` is what GetResourcePath answers: the resource resolves
+  // `dist/compiler-runtime.cjs` from it, exactly as it does on a real host.
+  await writeFile(join(artifact,"config","config.json"),JSON.stringify({port}));
+  host = createFiveMHost({ bundlePath, resourcePath: artifact });
   await host.waitForLine("ready");
 });
 
 after(async () => {
-  if (host === null) return;
-  if (host.isRunning()) {
+  if (host !== null) {
+    // A host always stops the resource before the process ends, so the stop path
+    // runs even when the last state was `failed` (a busy port) — otherwise a
+    // worker thread would outlive the suite and the process could not exit.
     const from = host.cursor();
     host.dispatchResourceStop();
-    // Best effort only: whether the stop happens is asserted inside the tests,
-    // teardown just must not leave a listener behind.
     await host.waitForLine("stop", { from, timeoutMs: 10_000 }).catch(() => undefined);
     await delay(50);
+    host.dispose();
   }
-  host.dispose();
+  if (buildRoot !== null) await rm(buildRoot, { recursive: true, force: true });
 });
 
-test("the frozen RFC contract values are the ones the probe implements", () => {
+test("the transport contract values are the ones the probe implements", () => {
   assert.equal(FROZEN.httpHost, "127.0.0.1");
   assert.equal(FROZEN.httpPort, 30130);
   assert.equal(FROZEN.httpPath, "/mcp");
-  assert.equal(FROZEN.maxBodyBytes, 1024 * 1024);
-  assert.equal(FROZEN.maxSessions, 32);
-  // The port stays configurable (RFC §5) but only 1–65535 is accepted, and an
+  // RFC §3: 256KiB body, 8 concurrent sessions, port domain 1024–65535 and a
+  // 5s body-read budget; §4: one protocol version.
+  assert.equal(FROZEN.maxBodyBytes, 256 * 1024);
+  assert.equal(FROZEN.maxSessions, 8);
+  assert.equal(FROZEN.maxBodyReadMs, 5000);
+  assert.equal(FROZEN.minHttpPort, 1024);
+  assert.equal(FROZEN.protocolVersion, "2025-11-25");
+  // The port stays configurable but only inside the contract domain; an
   // unusable value falls back to the fixed default rather than picking one.
-  assert.equal(resolveHttpPort(undefined), 30130);
-  assert.equal(resolveHttpPort("  "), 30130);
-  assert.equal(resolveHttpPort("0"), 30130);
-  assert.equal(resolveHttpPort("65536"), 30130);
-  assert.equal(resolveHttpPort("30131"), 30131);
-  // RFC §4.1: only the normalized loopback spellings, on the configured port.
+  // RFC §4: only the normalized loopback spellings, on the configured port.
   assert.equal(isAllowedHost("127.0.0.1:30130", 30130), true);
   assert.equal(isAllowedHost("localhost:30130", 30130), true);
   assert.equal(isAllowedHost(undefined, 30130), false);
@@ -172,27 +231,7 @@ test("the frozen RFC contract values are the ones the probe implements", () => {
   assert.equal(isAllowedOrigin("http://evil.example", 30130), false);
 });
 
-test("the probe boots on loopback and reports its runtime capabilities", async () => {
-  const capabilities = (await host.waitForLine("capabilities")).payload;
-  assert.equal(capabilities.resource, "fivem-mcp");
-  assert.equal(typeof capabilities.resourceEpoch, "string");
-  assert.equal(capabilities.listener.host, FROZEN.httpHost);
-  assert.equal(capabilities.listener.port, port);
-  assert.equal(capabilities.listener.path, FROZEN.httpPath);
-  assert.equal(capabilities.compiler.module, "typescript");
-  assert.match(capabilities.node.version, /^v22\./);
-  // The SDK's Node transport converts through web-standard Request/Response,
-  // so these are the APIs whose presence decides whether it can run at all.
-  for (const api of ["Request", "Response", "Headers", "ReadableStream", "TextEncoder", "AbortController"]) {
-    assert.equal(capabilities.webApis[api], true, `missing Web API in the probe runtime: ${api}`);
-  }
-
-  const workerProbe = (await host.waitForLine("worker-probe")).payload;
-  assert.equal(typeof workerProbe.available, "boolean");
-  assert.equal(workerProbe.available, true, `worker probe failed under plain Node: ${workerProbe.detail}`);
-});
-
-test("MCP initialize negotiates a session and lists exactly the probe tools", async () => {
+test("MCP initialize negotiates a session and lists formal tools with no probes", async () => {
   // Every request below goes out on its own TCP connection (`agent: false`),
   // so a session that survives from one request to the next also demonstrates
   // the RFC A02 rule that a single TCP close does not destroy a session.
@@ -202,56 +241,153 @@ test("MCP initialize negotiates a session and lists exactly the probe tools", as
   const parsed = JSON.parse(listed.text);
   assert.deepEqual(
     parsed.result.tools.map((tool) => tool.name).sort(),
-    ["compile_ts", "native_read", "status"],
+    ["esx", "execute_lua", "execute_ts", "logs", "ox", "qbcore", "queue", "reference", "resource", "status"],
   );
 
   const opened = host.evidence().filter((entry) => entry.tag === "session-open");
   assert.ok(opened.length >= 1, "an initialize must report a session-open line");
 
+  // A GET on a live session must be refused too: the refusal is about the
+  // method, not about the session.
+  const sse = await request({ method: "GET", headers: { accept: "text/event-stream", [SESSION_HEADER]: session } });
+  assert.equal(sse.status, 405, `a live-session GET must be 405, got ${sse.status}`);
+  assert.equal(sse.headers.allow, "POST, DELETE");
+
   const closed = await request({ method: "DELETE", headers: { [SESSION_HEADER]: session }, path: "/mcp" });
-  assert.ok(closed.status === 200 || closed.status === 204, `DELETE: ${closed.status}`);
+  assert.equal(closed.status, 204, `DELETE must answer the contract value 204, got ${closed.status}`);
 
   const afterClose = await rpc("tools/list", {}, { id: 3, session });
   assert.equal(afterClose.status, 404, "a deleted session must not be reused");
 });
 
-test("tools/call crosses to the host tick for natives and stays off it otherwise", async () => {
-  const session = await openSession("http-tick");
+test("tools are refused until the session sends notifications/initialized", async () => {
+  const response = await rpc("initialize", {
+    protocolVersion: PROTOCOL_VERSION,
+    capabilities: {},
+    clientInfo: { name: "http-preinit", version: "0.0.1" },
+  });
+  assert.equal(response.status, 200, response.text);
+  const session = response.headers[SESSION_HEADER];
+  assert.equal(typeof session, "string");
 
-  const before = JSON.parse((await callTool("status", session)).text).result.structuredContent;
-  const nativeRead = await callTool("native_read", session);
-  assert.equal(nativeRead.status, 200, nativeRead.text);
-  const native = JSON.parse(nativeRead.text).result.structuredContent;
-  assert.equal(native.executedOnHostTick, true);
-  assert.equal(native.resource, "fivem-mcp");
-  assert.equal(native.resourceState, "started");
-  assert.equal(typeof native.gameTimerMs, "number");
+  // RFC §4: "未收到 initialized 通知不能执行工具". The SDK does not enforce it.
+  const early = await callTool("status", session);
+  assert.equal(early.status, 400, `tools/call before initialized: ${early.status} ${early.text}`);
+  assert.equal(JSON.parse(early.text).error.code, -32600);
 
-  const after = JSON.parse((await callTool("status", session)).text).result.structuredContent;
-  assert.equal(after.counters.tickDrains, before.counters.tickDrains + 1);
-  // The whole point of the queue: a request handler never touched a native.
-  assert.deepEqual(host.violations, []);
+  const malformed=await request({headers:{'content-type':'application/json',accept:'application/json, text/event-stream',[SESSION_HEADER]:session},body:JSON.stringify({method:'notifications/initialized'})});
+  assert.equal(malformed.status,400);assert.equal((await callTool('status',session)).status,400);
+  const accepted = await notify("notifications/initialized", {}, { session });
+  assert.ok(accepted.status === 202 || accepted.status === 200, `initialized notify: ${accepted.status}`);
 
-  const closed = await request({ method: "DELETE", headers: { [SESSION_HEADER]: session }, path: "/mcp" });
-  assert.ok(closed.status === 200 || closed.status === 204, `DELETE: ${closed.status}`);
+  const after = await callTool("status", session);
+  assert.equal(after.status, 200, `tools/call after initialized: ${after.text}`);
+
+  await request({ method: "DELETE", headers: { [SESSION_HEADER]: session }, path: "/mcp" });
 });
 
-test("tools/call transpiles TypeScript in-process and reports the cost", async () => {
-  const session = await openSession("http-compile");
-  const compiled = await callTool("compile_ts", session);
-  assert.equal(compiled.status, 200, compiled.text);
-  const result = JSON.parse(compiled.text).result.structuredContent;
-  assert.match(result.javascript, /function probe/);
-  assert.ok(result.sourceBytes > 0);
-  assert.ok(Number.isInteger(result.elapsedMs) && result.elapsedMs >= 0);
+test('initialize batches and empty reference queries are protocol errors',async()=>{
+ const batch=await request({headers:{'content-type':'application/json',accept:'application/json, text/event-stream'},body:JSON.stringify([{jsonrpc:'2.0',id:1,method:'initialize',params:{protocolVersion:PROTOCOL_VERSION,capabilities:{},clientInfo:{name:'batch',version:'1'}}}])});
+ assert.equal(batch.status,400);assert.equal(batch.headers[SESSION_HEADER],undefined);
+ const session=await openSession('reference-empty');const empty=await callTool('reference',session,{query:'   '});assert.equal(rpcErrorCode(empty),-32602);
+ await request({method:'DELETE',headers:{[SESSION_HEADER]:session}});
+});
 
-  const oversized = await callTool("compile_ts", session, { source: "a".repeat(FROZEN.maxCodeBytes + 1) });
-  const failure = JSON.parse(oversized.text).result;
-  assert.equal(failure.isError, true);
-  assert.equal(failure.structuredContent.error.code, "INVALID_ARGUMENT");
+test("initialize pins the single supported protocol version", async () => {
+  // RFC §4: this release speaks 2025-11-25 only; an initialize asking for
+  // another version is answered with the version this end supports, and the
+  // client decides whether to continue. The SDK would otherwise echo a version
+  // from its own older, wider list.
+  const response = await rpc("initialize", {
+    protocolVersion: "2025-06-18",
+    capabilities: {},
+    clientInfo: { name: "http-version-pin", version: "0.0.1" },
+  });
+  assert.equal(response.status, 200, response.text);
+  const body = JSON.parse(response.text);
+  assert.equal(body.result.protocolVersion, PROTOCOL_VERSION);
+  // Only the tools capability is declared, and it never changes.
+  assert.equal(body.result.capabilities.tools.listChanged, false);
+  const pinned = host.evidence().some(
+    (entry) => entry.tag === "protocol-version-pinned" && entry.payload.requested === "2025-06-18",
+  );
+  assert.equal(pinned, true, "the pinned request must be reported, not silently rewritten");
 
-  const closed = await request({ method: "DELETE", headers: { [SESSION_HEADER]: session }, path: "/mcp" });
-  assert.ok(closed.status === 200 || closed.status === 204, `DELETE: ${closed.status}`);
+  const session = response.headers[SESSION_HEADER];
+  await request({ method: "DELETE", headers: { [SESSION_HEADER]: session }, path: "/mcp" });
+});
+
+test("the protocol lock also holds on the request header, not only on initialize", async () => {
+  const session = await openSession("http-version-header");
+
+  // The SDK's own supported list still holds 2025-06-18 / 2025-03-26 /
+  // 2024-11-05 / 2024-10-07 and would answer 200 for them. §4 requires 400 for
+  // a header that is explicitly incompatible with the locked version.
+  for (const version of ["2025-06-18", "2025-03-26", "2024-10-07", "1999-01-01"]) {
+    const refused = await rpc("tools/list", {}, {
+      id: 40,
+      session,
+      extraHeaders: { "mcp-protocol-version": version },
+    });
+    assert.equal(refused.status, 400, `${version} must be refused: ${refused.text}`);
+    assert.equal(rpcErrorCode(refused), -32600, refused.text);
+  }
+
+  // No header: the session's negotiated version governs, so the request works.
+  const withoutHeader = await rpc("tools/list", {}, { id: 41, session });
+  assert.equal(withoutHeader.status, 200, withoutHeader.text);
+
+  // The locked version itself is accepted.
+  const matching = await rpc("tools/list", {}, {
+    id: 42,
+    session,
+    extraHeaders: { "mcp-protocol-version": PROTOCOL_VERSION },
+  });
+  assert.equal(matching.status, 200, matching.text);
+
+  // A refusal must not have damaged the session.
+  const stillUsable = await rpc("tools/list", {}, { id: 43, session });
+  assert.equal(stillUsable.status, 200);
+
+  await request({ method: "DELETE", headers: { [SESSION_HEADER]: session }, path: "/mcp" });
+});
+
+test("an unknown tool is a JSON-RPC -32602, not a tool error wrapper", async () => {
+  const session = await openSession("http-unknown-tool");
+  const response = await callTool("does_not_exist", session, {});
+  assert.equal(rpcErrorCode(response), -32602, response.text);
+  // The status is uniform with this end point's other protocol errors; the SDK
+  // would otherwise answer 200 with an error body.
+  assert.equal(response.status, 400, `unknown tool must be 400, got ${response.status}`);
+  await request({ method: "DELETE", headers: { [SESSION_HEADER]: session }, path: "/mcp" });
+});
+
+test("a malformed body and a missing session are JSON-RPC protocol errors", async () => {
+  const malformed = await request({
+    headers: { "content-type": "application/json", accept: "application/json, text/event-stream" },
+    body: "{ not json",
+  });
+  assert.equal(malformed.status, 400);
+  assert.equal(JSON.parse(malformed.text).error.code, -32700);
+
+  const noSession = await rpc("tools/list", {}, { id: 20 });
+  assert.equal(noSession.status, 400);
+  assert.equal(JSON.parse(noSession.text).error.code, -32600);
+
+  const unknownSession = await rpc("tools/list", {}, { id: 21, session: "00000000-0000-4000-8000-000000000000" });
+  assert.equal(unknownSession.status, 404);
+  assert.equal(JSON.parse(unknownSession.text).error.code, -32600);
+});
+
+test("a stalled request body hits the read budget with 408", { timeout: 30_000 }, async () => {
+  // §3 gives the body read a 5s budget. Without it a client that announces a
+  // body and then stops holds the request open forever.
+  const started = Date.now();
+  const response = await rawRequest({ declaredLength: 50, body: "x" });
+  const elapsed = Date.now() - started;
+  assert.equal(response.status, 408, `expected 408, got ${response.status}: ${response.text}`);
+  assert.equal(response.headers.connection, "close");
+  assert.ok(elapsed >= 4_000, `the budget must actually be waited out, took ${elapsed}ms`);
 });
 
 test("the HTTP boundary rejects a foreign Host, a foreign Origin, unknown paths and unknown methods", async () => {
@@ -277,10 +413,13 @@ test("the HTTP boundary rejects a foreign Host, a foreign Origin, unknown paths 
 
   const wrongMethod = await request({ method: "PUT", headers, body });
   assert.equal(wrongMethod.status, 405);
-  assert.equal(wrongMethod.headers.allow, "POST, GET, DELETE");
+  assert.equal(wrongMethod.headers.allow, "POST, DELETE");
 
+  // RFC §4: GET is not served at all — no standalone subscription, and no
+  // Last-Event-ID replay, because every elicitation travels on the original
+  // tools/call POST. Advertising GET in `allow` would invite clients onto it.
   const getWithoutSession = await request({ method: "GET", headers: { accept: "text/event-stream" } });
-  assert.equal(getWithoutSession.status, 400);
+  assert.equal(getWithoutSession.status, 405);
 });
 
 test("the transport refuses an illegal media type and an unsupported protocol version", async () => {
@@ -309,10 +448,10 @@ test("the transport refuses an illegal media type and an unsupported protocol ve
   assert.equal(stillUsable.status, 200);
 
   const closed = await request({ method: "DELETE", headers: { [SESSION_HEADER]: session }, path: "/mcp" });
-  assert.ok(closed.status === 200 || closed.status === 204, `DELETE: ${closed.status}`);
+  assert.equal(closed.status, 204, `DELETE must answer the contract value 204, got ${closed.status}`);
 });
 
-test("a request body over the frozen 1 MiB ceiling is refused", async () => {
+test("a request body over the frozen 256KiB ceiling is refused", async () => {
   const oversized = JSON.stringify({
     jsonrpc: "2.0",
     id: 1,
@@ -336,6 +475,13 @@ test("a session is required after initialize, and an unknown session is refused"
 });
 
 test("the session ceiling refuses an over-limit initialize without evicting live sessions", async () => {
+  // The ceiling counts live sessions, so one leaked by an earlier test would
+  // show up here as fewer admissions rather than as a failure. Assert the floor.
+  const floorSession = await openSession("http-cap-floor");
+  const floorStatus = JSON.parse((await callTool("status", floorSession)).text).result.structuredContent;
+  assert.equal(host.evidence().filter(e=>e.tag==="session-open").at(-1).payload.active, 1, "a previous test leaked a session");
+  await request({ method: "DELETE", headers: { [SESSION_HEADER]: floorSession }, path: "/mcp" });
+
   const primes = [];
   let refusedAt = 0;
   let overLimit = { status: 0, headers: {}, text: "" };
@@ -345,13 +491,17 @@ test("the session ceiling refuses an over-limit initialize without evicting live
       capabilities: {},
       clientInfo: { name: `http-cap-${attempt}`, version: "0.0.1" },
     });
-    if (response.status === 503) {
+    // §3 gives 429 to the concurrency ceiling; 503 belongs to the inbound
+    // connection budget, which this entry point does not track.
+    if (response.status === 429) {
       refusedAt = attempt;
       overLimit = response;
       break;
     }
     assert.equal(response.status, 200, `initialize ${attempt} failed: ${response.text}`);
-    primes.push(response.headers[SESSION_HEADER]);
+    const session = response.headers[SESSION_HEADER];
+    await notify("notifications/initialized", {}, { session });
+    primes.push(session);
   }
 
   // Exactly the configured number is admitted, so no earlier test leaked a
@@ -366,10 +516,85 @@ test("the session ceiling refuses an over-limit initialize without evicting live
 
   for (const session of primes) {
     const closed = await request({ method: "DELETE", headers: { [SESSION_HEADER]: session }, path: "/mcp" });
-    assert.ok(closed.status === 200 || closed.status === 204, `DELETE ${session}: ${closed.status}`);
+    assert.equal(closed.status, 204, `DELETE ${session} must answer 204, got ${closed.status}`);
   }
   const status = JSON.parse((await callTool("status", await openSession("http-cap-final"))).text);
-  assert.equal(status.result.structuredContent.sessions.max, FROZEN.maxSessions);
+  assert.equal(status.result.structuredContent.data.service,"fivem-mcp");
+});
+
+test('formal TS executes through the FIFO and task query preserves encoded values', async()=>{
+ const session=await openSession();
+ const reply=await rpc('tools/call',{name:'execute_ts',arguments:{side:'server',code:'const n: number = args.value; return n + GetNumResources();',args:{value:39}}},{session,id:101});
+ const body=JSON.parse(reply.text).result;assert.equal(body.isError,false,reply.text);assert.equal(body.structuredContent.data.state,'succeeded');assert.deepEqual(body.structuredContent.data.result,{kind:'values',values:[42]});
+ const id=body.structuredContent.data.taskId;
+ const query=await rpc('tools/call',{name:'queue',arguments:{action:'status',taskId:id}},{session,id:102});
+ assert.equal(JSON.parse(query.text).result.structuredContent.data.task.taskId,id);
+ const bad=await rpc('tools/call',{name:'execute_ts',arguments:{side:'server',code:'return require("x");'}},{session,id:103});
+ assert.equal(JSON.parse(bad.text).result.structuredContent.error.code,'COMPILE_FAILED');
+ await request({method:'DELETE',headers:{[SESSION_HEADER]:session}});
+});
+
+test('resource changes share FIFO and server logs preserve resource attribution',async()=>{
+ const session=await openSession();
+ const list=await callTool('resource',session,{action:'list'});assert.equal(JSON.parse(list.text).result.structuredContent.data.resources.length,3);
+ const protectedResult=await callTool('resource',session,{action:'stop',name:'fivem-mcp'});assert.equal(JSON.parse(protectedResult.text).result.structuredContent.error.code,'SELF_RESOURCE_PROTECTED');
+ const started=await callTool('resource',session,{action:'start',name:'example'});assert.equal(JSON.parse(started.text).result.structuredContent.data.result.change.after,'started');
+ host.log('script:example','hello resource');
+ const logs=await callTool('logs',session,{side:'server',resource:'example'});assert.equal(JSON.parse(logs.text).result.structuredContent.data.lines[0].message,'hello resource');
+ await request({method:'DELETE',headers:{[SESSION_HEADER]:session}});
+});
+
+test('server Lua local terminal uses its server identity rather than the client wire envelope',async()=>{
+ const session=await openSession('lua-bridge');let executions=0;
+ host.onLocal('fivem-mcp:mcp:v1:local:execute',raw=>{const message=JSON.parse(raw);executions++;assert.equal(message.payload.kind,'lua');host.local('fivem-mcp:mcp:v1:local:terminal',JSON.stringify({v:1,type:'terminal',binding:message.binding,taskId:message.taskId,payload:{execution:'ended',result:{kind:'values',values:[42,{$mcp:'nil'}]}}}));});
+ const result=JSON.parse((await callTool('execute_lua',session,{side:'server',code:'return 42, nil'})).text).result.structuredContent;
+ assert.equal(result.ok,true,JSON.stringify(result));assert.equal(executions,1);assert.deepEqual(result.data.result.values,[42,{$mcp:'nil'}]);
+ await request({method:'DELETE',headers:{[SESSION_HEADER]:session}});
+});
+
+test('HTTP client execution binds the genuine network source and settles matching terminal evidence',async()=>{
+  const session=await openSession('client-integration');
+  const epoch='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';let binding;
+  host.onNetwork((event,id,raw)=>{
+    const message=JSON.parse(raw);assert.equal(id,7);
+    if(event.endsWith(':bind')){binding=message.binding;host.networkFrom(7,'fivem-mcp:mcp:v1:heartbeat',JSON.stringify({v:1,type:'heartbeat',binding,payload:{lua:true,js:true}}));}
+    if(event.endsWith(':execute')){host.networkFrom(7,'fivem-mcp:mcp:v1:terminal',JSON.stringify({v:1,type:'terminal',binding,taskId:message.taskId,payload:{execution:'ended',result:{kind:'values',values:[42]}}}));}
+  });
+  host.networkFrom(7,'fivem-mcp:mcp:v1:hello',JSON.stringify({v:1,type:'hello',payload:{clientEpoch:epoch,lua:true,js:true}}));
+  await delay(20);
+  const result=JSON.parse((await callTool('execute_ts',session,{side:'client',clientId:7,code:'return 42;'})).text).result.structuredContent;
+  assert.equal(result.ok,true,JSON.stringify(result));assert.equal(result.data.target.binding.clientId,7);assert.deepEqual(result.data.result.values,[42]);
+  const status=JSON.parse((await callTool('status',session,{clientId:7})).text).result.structuredContent;
+  assert.equal(status.ok,true,JSON.stringify(status));assert.equal(status.data.clients.length,1);
+  host.onNetwork((event,id,raw)=>{const message=JSON.parse(raw);if(event.endsWith(':bind'))host.networkFrom(id,'fivem-mcp:mcp:v1:heartbeat',JSON.stringify({v:1,type:'heartbeat',binding:message.binding,payload:{lua:true,js:true}}));});
+  host.networkFrom(8,'fivem-mcp:mcp:v1:hello',JSON.stringify({v:1,type:'hello',payload:{clientEpoch:'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',lua:true,js:true}}));await delay(20);
+  assert.equal(rpcErrorCode(await callTool('logs',session,{side:'all'})),-32602);
+  const selected=JSON.parse((await callTool('logs',session,{side:'all',clientId:7})).text).result.structuredContent;
+  assert.equal(selected.ok,true,JSON.stringify(selected));assert.equal(selected.data.coverage.length,2);
+  assert.equal(selected.data.coverage[1].clientId,7);
+  host.onNetwork(null);await request({method:'DELETE',headers:{[SESSION_HEADER]:session}});
+});
+
+test('SQL writes require form elicitation on the original SSE stream before FIFO dispatch',async()=>{
+  let writes=0;host.setDependency('oxmysql','2.14.1',{update_async:async(sql,values)=>{writes++;assert.equal(sql,'UPDATE fixture SET enabled = ?');assert.deepEqual(values,[true]);return 1;}});
+  const init=await rpc('initialize',{protocolVersion:PROTOCOL_VERSION,capabilities:{elicitation:{form:{}}},clientInfo:{name:'approval-test',version:'1'}});
+  const session=init.headers[SESSION_HEADER];await notify('notifications/initialized',{}, {session});
+  async function write(approve){
+    return await new Promise((resolve,reject)=>{
+      const req=httpRequest({host:'127.0.0.1',port,path:'/mcp',method:'POST',agent:false,headers:{'content-type':'application/json',accept:'application/json, text/event-stream',[SESSION_HEADER]:session}},res=>{
+        assert.match(res.headers['content-type'],/text\/event-stream/);let pending='';
+        res.on('data',chunk=>{pending+=chunk.toString();let end;while((end=pending.indexOf('\n\n'))>=0){const frame=pending.slice(0,end);pending=pending.slice(end+2);const data=frame.split('\n').find(line=>line.startsWith('data: '));if(!data)continue;const message=JSON.parse(data.slice(6));
+          if(message.method==='elicitation/create'){
+            assert.equal(writes,0);assert.ok(message.params.message.includes('UPDATE fixture SET enabled = ?'));
+            void request({headers:{'content-type':'application/json',accept:'application/json, text/event-stream',[SESSION_HEADER]:session},body:JSON.stringify({jsonrpc:'2.0',id:message.id,result:{action:'accept',content:{approve}}})}).catch(reject);
+          }else if(message.id===91)resolve(message.result.structuredContent);
+        }});res.on('error',reject);
+      });req.on('error',reject);req.end(JSON.stringify({jsonrpc:'2.0',id:91,method:'tools/call',params:{name:'ox',arguments:{side:'server',library:'oxmysql',method:'update',args:['UPDATE fixture SET enabled = ?',[true]]}}}));
+    });
+  }
+  const declined=await write(false);assert.equal(declined.error.code,'CONFIRMATION_DECLINED');assert.equal(writes,0);
+  const accepted=await write(true);assert.equal(accepted.ok,true,JSON.stringify(accepted));assert.equal(writes,1);assert.deepEqual(accepted.data.result.values,[1]);
+  await request({method:'DELETE',headers:{[SESSION_HEADER]:session}});
 });
 
 test("stopping releases the listener and the port rebinds across restarts", async () => {

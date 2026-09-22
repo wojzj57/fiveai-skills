@@ -30,14 +30,12 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, sep } from "node:path";
 
-/** Generated directories that must never be copied into a fixture. */
-const EXCLUDED_DIRECTORY_NAMES = new Set(["node_modules", "dist", "artifact"]);
-
 /**
- * The outer preservation test is never copied: a fixture that contained it
- * could recurse into further test runs.
+ * Generated directories that must never be copied into a fixture. `artificials`
+ * is the published resource output: a fixture that inherited the developer's
+ * copy could build or assert against a stale artifact instead of its own.
  */
-const EXCLUDED_FILE_NAMES = new Set(["unified-fixture-preservation.test.mjs"]);
+const EXCLUDED_DIRECTORY_NAMES = new Set(["node_modules", "dist", "artifact", "artificials"]);
 
 /** Root files the fixture needs for pnpm to install and the build to run. */
 const ROOT_FILES = ["package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml"];
@@ -49,7 +47,6 @@ function copyFileTree(source, target) {
   mkdirSync(target, { recursive: true });
   for (const entry of readdirSync(source, { withFileTypes: true })) {
     if (entry.isDirectory() && EXCLUDED_DIRECTORY_NAMES.has(entry.name)) continue;
-    if (entry.isFile() && EXCLUDED_FILE_NAMES.has(entry.name)) continue;
     const from = join(source, entry.name);
     const to = join(target, entry.name);
     if (entry.isDirectory()) copyFileTree(from, to);

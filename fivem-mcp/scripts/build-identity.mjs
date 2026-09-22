@@ -9,12 +9,14 @@
  *   - fivem-mcp/package.json, fivem-mcp/tsconfig.json, fivem-mcp/fxmanifest.lua
  *   - fivem-mcp/scripts/** (the package build scripts)
  *   - fivem-mcp/src/** (except src/generated/)
+ *   - fivem-mcp/http-mcp/** (the in-resource HTTP MCP resource sources)
  *
  * Text is normalized CRLF -> LF, paths use "/", entries are sorted by
  * repository-relative path, and each entry contributes
  * path + NUL + text + NUL to the SHA-256. The identity is
  * `fivem-mcp/<package version>/<sha256 hex>` where the version comes from
- * fivem-mcp/package.json.
+ * fivem-mcp/package.json; `digest` carries the same SHA-256 on its own, which
+ * is the shape the runtime-debug contract's `status.buildId` requires.
  *
  * writeBuildIdentity(root) embeds the identity into
  * fivem-mcp/src/generated/build-identity.ts — a build artifact: git
@@ -48,6 +50,10 @@ const SINGLE_FILES = [
 const SOURCE_DIRECTORIES = [
   { directory: "fivem-mcp/scripts", recursive: true, extension: null, skip: [] },
   { directory: "fivem-mcp/src", recursive: true, extension: null, skip: ["generated"] },
+  // The in-resource HTTP MCP resource is built from here, so its sources are
+  // build inputs too; otherwise an edit to server.ts would leave the
+  // published buildId unchanged and the artifact could not be matched to code.
+  { directory: "fivem-mcp/http-mcp", recursive: true, extension: null, skip: [] },
 ];
 
 function failMissing(relativePath) {
@@ -112,9 +118,20 @@ export function getBuildIdentity(root) {
   if (manifest === null || typeof manifest !== "object" || typeof manifest.version !== "string" || manifest.version.length === 0) {
     throw new Error("fivem-mcp/package.json has no usable version string");
   }
+  const digest = hash.digest("hex");
   return {
     packageVersion: manifest.version,
-    buildId: `fivem-mcp/${manifest.version}/${hash.digest("hex")}`,
+    /**
+     * Bare SHA-256. The runtime-debug contract requires `status.buildId` to
+     * match `^[a-f0-9]{64}$`, and the version is already a hash input, so this
+     * is the form the in-resource HTTP MCP reports.
+     */
+    digest,
+    /**
+     * Prefixed form for the retiring desktop consumers, which compare the
+     * string opaquely. It is not reported to MCP clients.
+     */
+    buildId: `fivem-mcp/${manifest.version}/${digest}`,
   };
 }
 

@@ -47,9 +47,12 @@ function parseEvidence(lines) {
  * @param {object} options
  * @param {string} options.bundlePath absolute path to the built resource bundle
  * @param {string} [options.resourceName] value `GetCurrentResourceName` returns
+ * @param {string} [options.resourcePath] value `GetResourcePath` returns; the
+ *   resource uses it to locate `dist/compiler-runtime.cjs`, so a test that exercises
+ *   compilation must point it at the built artifact directory
  * @param {Record<string, string>} [options.env] extra process env for the bundle
  */
-export function createFiveMHost({ bundlePath, resourceName = "fivem-mcp", env = {} } = {}) {
+export function createFiveMHost({ bundlePath, resourceName = "fivem-mcp", resourcePath = null, env = {} } = {}) {
   if (activeHost !== null) {
     throw new Error("only one simulated FiveM host may be active per process");
   }
@@ -63,6 +66,11 @@ export function createFiveMHost({ bundlePath, resourceName = "fivem-mcp", env = 
   let tickHandlers = [];
   let stopHandlers = [];
   let commands = new Map();
+  let events = new Map();
+  let consoleListener = null;
+  let netListener=null;
+  const metadata=new Map();
+  const resourceStates = new Map([[resourceName,"started"],["example","stopped"],["other","started"]]);
   let inTick = false;
   let tickTimer = null;
 
@@ -98,16 +106,40 @@ export function createFiveMHost({ bundlePath, resourceName = "fivem-mcp", env = 
     });
     installGlobal("on", (eventName, handler) => {
       if (eventName === "onResourceStop") stopHandlers.push(handler);
+      const listeners=events.get(eventName)??[];listeners.push(handler);events.set(eventName,listeners);
     });
+    installGlobal("onNet", (event,handler)=>{const handlers=events.get(event)??[];handlers.push(handler);events.set(event,handlers);});
+    installGlobal("emitNet",tickOnly("emitNet",(event,id,raw)=>netListener?.(event,id,raw)));
+    installGlobal("exports",{});
+    installGlobal("source",0);
+    installGlobal("GetPlayerName",tickOnly("GetPlayerName",id=>id==='7'?'fixture player':null));
     installGlobal("RegisterCommand", (name, handler) => {
       commands.set(name, handler);
     });
     // The execution natives the probe reads. `GetCurrentResourceName`,
     // `setTick`, `on` and `RegisterCommand` above are registration and identity
     // natives, which the shipped resource also calls at module scope.
-    installGlobal("GetResourceState", tickOnly("GetResourceState", () => "started"));
-    installGlobal("GetNumResources", tickOnly("GetNumResources", () => 3));
+    installGlobal("GetResourceState", tickOnly("GetResourceState", name => resourceStates.get(name)??"missing"));
+    installGlobal("GetNumResources", tickOnly("GetNumResources", () => resourceStates.size));
+    installGlobal("GetResourceByFindIndex",tickOnly("GetResourceByFindIndex",index=>[...resourceStates.keys()][index]));
+    installGlobal("StartResource",tickOnly("StartResource",name=>{resourceStates.set(name,"started");for(const fn of events.get("onResourceStart")??[])fn(name);return true;}));
+    installGlobal("StopResource",tickOnly("StopResource",name=>{resourceStates.set(name,"stopped");for(const fn of events.get("onResourceStop")??[])fn(name);return true;}));
+    installGlobal("GetResourceMetadata",tickOnly("GetResourceMetadata",name=>metadata.get(name)??null));
+    installGlobal("emit",tickOnly("emit",(name,...args)=>{for(const fn of events.get(name)??[])fn(...args);}));
+    installGlobal("RegisterConsoleListener",fn=>{consoleListener=fn;});
     installGlobal("GetGameTimer", tickOnly("GetGameTimer", () => Date.now() - startedAt));
+    // RFC §8.1 resolves the compiler module's file path through this native, so
+    // it is tick-only here too: a resource that read it off the tick would fail
+    // the suite instead of quietly working under Node.
+    installGlobal(
+      "GetResourcePath",
+      tickOnly("GetResourcePath", () => {
+        if (resourcePath === null) {
+          throw new Error("GetResourcePath was called but no resourcePath was configured for this host");
+        }
+        return resourcePath;
+      }),
+    );
   }
 
   function clearGlobals() {
@@ -147,6 +179,8 @@ export function createFiveMHost({ bundlePath, resourceName = "fivem-mcp", env = 
     tickHandlers = [];
     stopHandlers = [];
     commands = new Map();
+    events = new Map();
+    consoleListener = null;
     delete require.cache[require.resolve(modulePath)];
     require(modulePath);
   }
@@ -190,6 +224,12 @@ export function createFiveMHost({ bundlePath, resourceName = "fivem-mcp", env = 
       return last !== undefined && last.tag === "ready";
     },
     evidence,
+    onLocal(event,fn){const handlers=events.get(event)??[];handlers.push(fn);events.set(event,handlers);},
+    local(event,raw){for(const fn of events.get(event)??[])fn(raw);},
+    setDependency(name,version,api){resourceStates.set(name,'started');metadata.set(name,version);globalThis.exports[name]=api;},
+    onNetwork(fn){netListener=fn;},
+    networkFrom(id,event,raw){const previous=globalThis.source;globalThis.source=id;try{for(const fn of events.get(event)??[])fn(raw);}finally{globalThis.source=previous;}},
+    log(channel,message){consoleListener?.(channel,message);},
     waitForLine,
     get commandNames() {
       return [...commands.keys()];
