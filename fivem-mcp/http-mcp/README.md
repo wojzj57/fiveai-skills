@@ -1,7 +1,8 @@
 # FiveAI FiveM HTTP MCP
 
 A single resource serves Streamable HTTP MCP at `http://127.0.0.1:30130/mcp`.
-No external broker, compiler service or compilation Worker is required.
+JavaScript snippets execute natively. No runtime TypeScript compiler, external
+broker or compilation Worker is required. TypeScript remains a build-time tool.
 
 Real FxDK/FXServer, two-client, framework/database and AI application acceptance
 remain **NOT_EXECUTED**. Node shims and Lua 5.4 tests are not FiveM acceptance.
@@ -46,6 +47,8 @@ Only these keys are accepted. Port must be an integer from 1024 to 65535. Client
 logs accept up to four absolute Windows directories. Invalid/oversized config
 refuses startup. There is no environment-variable port override. Client log
 attribution requires a unique file matching the current random binding marker.
+Configuration is read on the host tick through `LoadResourceFile`, using the
+actual resource name; it does not require Node filesystem read permission.
 
 ## Tools
 
@@ -53,10 +56,10 @@ attribution requires a unique file matching the current random binding marker.
 
 | Tool | Behavior |
 | --- | --- |
-| status | Compiler, bindings, dependencies, logs and queue; optional client filter |
+| status | Native JS mode, bindings, dependencies, logs and queue; optional client filter |
 | queue | Status, pre-dispatch cancellation and evidence-based recovery |
 | execute_lua | Server/client function body and multiple return values |
-| execute_ts | TypeScript function body, type erasure, top-level await/return |
+| execute_js | JavaScript ES2022 function body, args, top-level await/return |
 | resource | Exact-name list/status/start/stop/restart; self stop/restart refused |
 | logs | Filtered bounded records and explicit coverage |
 | esx | ESX Legacy 1.15.2 explicit methods and projected player data |
@@ -64,10 +67,10 @@ attribution requires a unique file matching the current random binding marker.
 | ox | ox_lib 3.39.0, ox_target 1.18.1, oxmysql 2.14.1 |
 | reference | Pinned offline summaries and optional allowlisted online fallback |
 
-Example execute_ts arguments:
+Example execute_js arguments:
 
 ```json
-{"side":"server","code":"const n: number = await Promise.resolve(42); return n;"}
+{"side":"server","code":"const n = await Promise.resolve(42); return n;"}
 ```
 
 Example execute_lua arguments:
@@ -92,21 +95,40 @@ HTTP binds IPv4 loopback, checks Host/Origin and pins protocol 2025-11-25.
 POST and DELETE are supported; GET subscriptions, replay and batches are not.
 Clients must support sessions and POST SSE responses.
 
-TypeScript 5.9.3 loads as ordinary dist/compiler-runtime.cjs from the actual
-resource path. Compilation is synchronous in the server Node event loop. The
-5000ms preparation budget is checked after return, and cannot interrupt CPU work.
-Over-budget preparation faults TS until explicit restart; Lua/HTTP can continue
-when the event loop runs. Dispatch rechecks session, targets and generations.
+`execute_js` replaces `execute_ts`; the previous name is not an alias. Input is
+an ES2022 async function body, with `args` and `mcp` parameters. A bundled JS
+parser checks syntax before dispatch. TypeScript annotations, module imports,
+exports and direct require calls are rejected as `JAVASCRIPT_INVALID`. This
+syntax policy is not an isolation or security boundary.
 
-Server async continuations run through Host Tick. Detached callbacks and
-unawaited effects are outside the completion boundary; native/exports calls must
-obey FiveM scheduling rules. Queue/history, inputs/results, frames, sessions,
-logs and online fetches have explicit bounds. No automatic replay is performed.
+Execution begins on Host Tick. After `await`, server natives/exports must run
+inside a **synchronous** `mcp.host(callback)` callback. Nested async code and
+callbacks need the same explicit handoff. Both server and client provide it:
 
-Console command fiveai_mcp_report emits status. FIVEAI_MCP compiler records costs
-without source or arguments. Compiler/server bundles are not client download
-entries. Missing optional frameworks do not prevent resource startup. Reference
-provenance and bundled dependency licenses travel with the resource.
+```javascript
+const value = await Promise.resolve(42);
+return await mcp.host(() => ({value, resource: GetCurrentResourceName()}));
+```
+
+`mcp.host(async () => ...)` does not make the callback's later continuations run
+on Host Tick. Detached callbacks and unawaited effects are outside the task's
+completion boundary. The execution timeout cannot interrupt a synchronous loop;
+timeouts keep the unknown-execution/FIFO recovery semantics. Queue/history,
+inputs/results, sessions, logs and online fetches remain bounded.
+
+Console command fiveai_mcp_report emits status. `status.javascript` reports
+native ES2022 execution and explicit host access; `status.compiler` is removed.
+Server bundles are not client download entries. Missing optional frameworks do
+not prevent resource startup. Reference provenance and bundled licenses travel
+with the resource.
+
+The client runtime does not require browser TextEncoder/performance globals.
+Client Lua maintenance uses SetTimeout and stops rescheduling after resource stop.
+A local FxDK game must complete its MCP binding before client execution works.
+For client file logs, configure clientLogDirectories with the actual FiveM logs
+directory (for example `D:\\FiveM\\FiveM.app\\logs` in JSON). Binding, a unique log
+marker and Node read access to that directory are required; unavailable coverage
+is reported rather than silently attributed to a different client.
 
 ## Verification
 
@@ -118,8 +140,8 @@ py -3.11 fivem-mcp/tests/fixtures/http-lua-check.py
 Lua checks require Python 3.11 and lupa with Lua 5.4. Tests only build temporary
 fixtures. Host acceptance must record artifact/buildId, server/client execution,
 lifecycle, logs, frameworks, SQL effects and Codex/Claude Code/CodeBuddy behavior.
-Compiler performance requires 20 host samples per 1/16/64KiB valid input and deep
+The optional JS benchmark runs 20 samples per 1/16/64KiB valid input and deep
 syntax error class, with median/max and concurrent status latency.
 
 Run `node fivem-mcp/scripts/benchmark-http-mcp.mjs --help` for the explicit host
-benchmark runner. Capture compiler console records alongside its latency output.
+benchmark runner. Its results measure tool latency, not isolated parsing cost.
