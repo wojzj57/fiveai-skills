@@ -337,7 +337,7 @@
         "TASK_NOT_UNKNOWN",
         "RECOVERY_UNPROVEN",
         "HOST_UNAVAILABLE",
-        "COMPILER_UNAVAILABLE",
+        "JAVASCRIPT_INVALID",
         "COMPILE_FAILED",
         "PREPARATION_TIMEOUT",
         "EXECUTION_FAILED",
@@ -636,7 +636,7 @@
         "tool": {
           "enum": [
             "execute_lua",
-            "execute_ts",
+            "execute_js",
             "resource",
             "esx",
             "qbcore",
@@ -1222,39 +1222,6 @@
           ],
           "additionalProperties": false
         },
-        "compiler": {
-          "type": "object",
-          "properties": {
-            "state": {
-              "enum": [
-                "ready",
-                "faulted",
-                "starting"
-              ]
-            },
-            "version": {
-              "const": "5.9.3"
-            },
-            "reason": {
-              "oneOf": [
-                {
-                  "type": "string",
-                  "minLength": 1,
-                  "maxLength": 1024
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            }
-          },
-          "required": [
-            "state",
-            "version",
-            "reason"
-          ],
-          "additionalProperties": false
-        },
         "clients": {
           "type": "array",
           "items": {
@@ -1281,6 +1248,26 @@
         },
         "queue": {
           "$ref": "#/$defs/QueueOverview"
+        },
+        "javascript": {
+          "type": "object",
+          "properties": {
+            "mode": {
+              "const": "native"
+            },
+            "syntax": {
+              "const": "ES2022"
+            },
+            "hostAccess": {
+              "const": "explicit"
+            }
+          },
+          "required": [
+            "mode",
+            "syntax",
+            "hostAccess"
+          ],
+          "additionalProperties": false
         }
       },
       "required": [
@@ -1290,7 +1277,7 @@
         "buildId",
         "runtime",
         "listener",
-        "compiler",
+        "javascript",
         "clients",
         "dependencies",
         "logs",
@@ -1663,7 +1650,7 @@
         }
       ]
     },
-    "execute_tsInput": {
+    "execute_jsInput": {
       "type": "object",
       "oneOf": [
         {
@@ -1726,7 +1713,8 @@
           ],
           "additionalProperties": false
         }
-      ]
+      ],
+      "description": "JavaScript ES2022 async function body with args and mcp.host(callback). No TypeScript or imports. After await, server natives/exports require mcp.host. Not a sandbox."
     },
     "resourceInput": {
       "type": "object",
@@ -3544,7 +3532,7 @@
         }
       ]
     },
-    "execute_tsOutput": {
+    "execute_jsOutput": {
       "type": "object",
       "oneOf": [
         {
@@ -3844,7 +3832,7 @@
         "tool": {
           "enum": [
             "execute_lua",
-            "execute_ts",
+            "execute_js",
             "resource",
             "esx",
             "qbcore",

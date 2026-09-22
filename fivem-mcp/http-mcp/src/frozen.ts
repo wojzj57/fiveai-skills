@@ -16,7 +16,7 @@ export const FROZEN = {
   maxBodyReadMs: 5_000,
   /** §3: concurrent session ceiling. Over-limit initialize is refused, never evicts a live session. */
   maxSessions: 8,
-  /** §3: submitted code ceiling, reused here to bound the TypeScript function body. */
+  /** §3: submitted code ceiling, reused here to bound the JavaScript function body. */
   maxCodeBytes: 64 * 1024,
   /** §4: the only protocol version this first release speaks. */
   protocolVersion: "2025-11-25",

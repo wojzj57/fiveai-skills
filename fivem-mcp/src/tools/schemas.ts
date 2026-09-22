@@ -135,7 +135,7 @@ export const QueueInputSchema = z.discriminatedUnion("action", [
   }),
 ]);
 
-/** execute_lua / execute_ts — fragment body plus JSON args (RFC §6.1). */
+/** execute_lua / execute_js — fragment body plus JSON args (RFC §6.1). */
 const ExecuteInputSchema = z
   .strictObject({
     side: SideSchema,
@@ -156,7 +156,7 @@ const ExecuteInputSchema = z
   });
 
 export const ExecuteLuaInputSchema = ExecuteInputSchema;
-export const ExecuteTsInputSchema = ExecuteInputSchema;
+export const ExecuteJsInputSchema = ExecuteInputSchema;
 
 /** resource — exact names, no wildcards or batches (RFC §6.1, §11). */
 export const ResourceInputSchema = z.discriminatedUnion("action", [
@@ -292,7 +292,7 @@ export const TOOL_INPUT_SCHEMAS = {
   status: StatusInputSchema,
   queue: QueueInputSchema,
   execute_lua: ExecuteLuaInputSchema,
-  execute_ts: ExecuteTsInputSchema,
+  execute_js: ExecuteJsInputSchema,
   resource: ResourceInputSchema,
   logs: LogsInputSchema,
   esx: EsxInputSchema,

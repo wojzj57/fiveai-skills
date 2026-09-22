@@ -103,7 +103,7 @@ function values(...values) {
 function submit(center, overrides = {}) {
   return center.submit({
     sessionId: "session-a",
-    tool: "execute_ts",
+    tool: "execute_js",
     target: serverTarget(),
     payload: { code: "return 1", args: {} },
     ...overrides,
@@ -470,7 +470,7 @@ test("oversized trusted results become RESULT_TOO_LARGE and stop drops no work s
   await center.stop();
   assert.equal(center.get(active.taskId).state, "unknown");
   assert.equal(center.get(queued.taskId).state, "cancelled");
-  assert.equal(center.submit({ sessionId: "later", tool: "execute_ts", target: serverTarget(), payload: {} }).error.code, "SESSION_ENDED");
+  assert.equal(center.submit({ sessionId: "later", tool: "execute_js", target: serverTarget(), payload: {} }).error.code, "SESSION_ENDED");
 });
 
 test('closing a waiting-host session atomically cancels its queued successor',async()=>{

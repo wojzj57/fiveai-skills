@@ -5,20 +5,19 @@ import {schema,bounded,validate} from './shared/schema.ts';
 import {encodeValues} from './shared/wire.ts';
 import type {Config} from './shared/config.ts';
 import type {HostScheduler} from './execution/host.ts';
-import {CompilerRuntime} from './execution/compiler-runtime.ts';
 import {TaskCenter} from './tasks/task-center.ts';
 import type {TaskError,TaskErrorCode,TaskExecution,TaskPhase,TaskBinding,TaskResult} from './tasks/types.ts';
 import {LogStore} from './logs/store.ts';
 import {ResourceController} from './execution/resources.ts';
 import {Confirmations,type ConfirmationContext} from './adapters/confirmation.ts';
 import {ReferenceSearch} from './reference/search.ts';
-import {runOnHost,mappedError} from './execution/javascript.ts';
+import {runOnHost,mappedError,prepareJavaScript} from './execution/javascript.ts';
 import {ClientBindingManager,encodeClientExecute,type ClientExecutePayload} from './execution/client-bindings.ts';
 import {ClientLogs} from './logs/client-files.ts';
 import {isReadOnly} from './adapters/sql.ts';
 
 interface RuntimeOptions {resourceName:string;resourceEpoch:string;buildId:string;resourcePath:string;config:Config;host:HostScheduler;sessionValid:(id:string)=>boolean;report:(tag:string,payload:unknown)=>void}
-interface Plan {code?:string;args?:unknown;timeoutMs?:number;javascript?:string;sourceMap?:string|null;[key:string]:unknown}
+interface Plan {code?:string;args?:unknown;timeoutMs?:number;javascript?:string;[key:string]:unknown}
 type Handler=(args:Record<string,unknown>,sessionId:string,context?:ConfirmationContext)=>Promise<ReturnType<typeof output>>;
 const versions:Record<string,string>={es_extended:'1.15.2','qb-core':'1.3.0',ox_lib:'3.39.0',ox_target:'1.18.1',oxmysql:'2.14.1'};
 function error(code:TaskErrorCode,message:string=code,execution:TaskExecution='not_dispatched',phase:TaskPhase='validation'):TaskError{return {code,message:message.slice(0,4096),phase,retryable:false,execution};}
@@ -26,7 +25,6 @@ function output(value:Record<string,unknown>){return {isError:value.ok===false,s
 export class RuntimeService {
   private registry:Record<string,{inputSchema:ReturnType<typeof schema>;outputSchema:ReturnType<typeof schema>;handler:Handler}>;
   private options:RuntimeOptions;
-  private compiler:CompilerRuntime;
   private tasks:TaskCenter;
   private logs=new LogStore();
   private stopped=false;
@@ -43,7 +41,7 @@ export class RuntimeService {
       status:(args,id,context)=>this.handleCall('status',args,id,context),
       queue:(args,id,context)=>this.handleCall('queue',args,id,context),
       execute_lua:(args,id,context)=>this.handleCall('execute_lua',args,id,context),
-      execute_ts:(args,id,context)=>this.handleCall('execute_ts',args,id,context),
+      execute_js:(args,id,context)=>this.handleCall('execute_js',args,id,context),
       resource:(args,id,context)=>this.handleCall('resource',args,id,context),
       logs:(args,id,context)=>this.handleCall('logs',args,id,context),
       esx:(args,id,context)=>this.handleCall('esx',args,id,context),
@@ -61,7 +59,7 @@ export class RuntimeService {
       onTerminal:message=>{const payload=message.type==='terminal'?message.payload:message.payload.known?message.payload.terminal:null;if(!payload)return false;const result=this.tasks.settle(message.taskId,{identity:message.binding,...payload});return result.accepted||result.reason==='duplicate';},
     });
     this.maintenance=setInterval(()=>{this.clients.sweep();void this.clientLogs.poll();},200);this.maintenance.unref();
-    this.options=options;this.compiler=new CompilerRuntime(undefined,data=>options.report('compiler',data));
+    this.options=options;
     this.resources=new ResourceController(options.resourceName,options.host,{names:()=>Array.from({length:GetNumResources()},(_,i)=>GetResourceByFindIndex(i)),state:GetResourceState,start:StartResource,stop:StopResource});
     this.tasks=new TaskCenter({
       resourceEpoch:options.resourceEpoch,
@@ -82,10 +80,10 @@ export class RuntimeService {
         if(context.task.target.playerId!==undefined&&this.players.get(context.task.target.playerId)!==context.task.target.playerConnectionId)return {ok:false as const,error:error('TARGET_CHANGED')};
         if(context.task.target.binding.side==='client'&&JSON.stringify(this.clients.resolveTarget(context.task.target.binding.clientId))!==JSON.stringify(context.task.target.binding))return {ok:false as const,error:error('TARGET_CHANGED')};
         try {
-          const prepared=context.task.tool==='execute_ts'?{...plan,...this.compiler.compile(plan.code!)}:plan;
+          const prepared=context.task.tool==='execute_js'?{...plan,...prepareJavaScript(plan.code!)}:plan;
           if(context.task.target.binding.side==='client')encodeClientExecute(context.task.target.binding,context.taskId,this.clientPayload(context.task.tool,prepared,context.taskId));
           return {ok:true as const,value:prepared};
-        }catch(e){const message=String(e);const code:TaskErrorCode=message.includes('PREPARATION_TIMEOUT')?'PREPARATION_TIMEOUT':message.includes('COMPILE_FAILED')?'COMPILE_FAILED':message.includes('INPUT_TOO_LARGE')?'INPUT_TOO_LARGE':message.includes('RESULT_TOO_LARGE')?'RESULT_TOO_LARGE':message.includes('COMPILER_UNAVAILABLE')?'COMPILER_UNAVAILABLE':'INTERNAL_ERROR';return {ok:false as const,error:error(code,message,'not_dispatched','preparing')};}
+        }catch(e){const message=String(e);const code:TaskErrorCode=message.includes('PREPARATION_TIMEOUT')?'PREPARATION_TIMEOUT':message.includes('COMPILE_FAILED')?'COMPILE_FAILED':message.includes('INPUT_TOO_LARGE')?'INPUT_TOO_LARGE':message.includes('RESULT_TOO_LARGE')?'RESULT_TOO_LARGE':message.includes('JAVASCRIPT_INVALID')?'JAVASCRIPT_INVALID':'INTERNAL_ERROR';return {ok:false as const,error:error(code,message,'not_dispatched','preparing')};}
       },
       dispatch:async context=>{
         const plan=context.prepared as Plan;
@@ -116,10 +114,10 @@ export class RuntimeService {
             return;
           }
           try {
-            runOnHost(String(plan.hostJavascript),plan.args??{},options.host).then(value=>{
+            runOnHost(String(plan.javascript),plan.args??{},options.host).then(value=>{
               try {this.tasks.settle(task.taskId,{identity:task.target.binding,execution:'ended',result:encodeValues([value])});}
               catch(e){this.tasks.settle(task.taskId,{identity:task.target.binding,execution:'ended',error:error(String(e).includes('RESULT_TOO_LARGE')?'RESULT_TOO_LARGE':'RESULT_UNSUPPORTED',String(e),'ended','dispatched')});}
-            },e=>this.tasks.settle(task.taskId,{identity:task.target.binding,execution:'ended',error:{...error('EXECUTION_FAILED',String(e),'ended','dispatched'),...mappedError(e,plan.hostSourceMap)}}));
+            },e=>this.tasks.settle(task.taskId,{identity:task.target.binding,execution:'ended',error:{...error('EXECUTION_FAILED',String(e),'ended','dispatched'),...mappedError(e)}}));
           }catch(e){this.tasks.settle(task.taskId,{identity:task.target.binding,execution:'ended',error:error('EXECUTION_FAILED',String(e),'ended','dispatched')});}
         },true);
       },
@@ -128,9 +126,8 @@ export class RuntimeService {
   private clientPayload(tool:string,plan:Plan,taskId:string):ClientExecutePayload {
     const adapter=['esx','qbcore','ox'].includes(tool);
     const {_sessionId,...publicPlan}=plan;
-    return {kind:tool==='execute_ts'?'js':'lua',code:tool==='execute_ts'?String(plan.javascript):adapter?'return FiveAiAdapter(args)':String(plan.code),args:adapter?{...publicPlan,tool}:plan.args??{},timeoutMs:plan.timeoutMs??10000,planHash:createHash('sha256').update(JSON.stringify({taskId,plan:publicPlan})).digest('hex')};
+    return {kind:tool==='execute_js'?'js':'lua',code:tool==='execute_js'?String(plan.javascript):adapter?'return FiveAiAdapter(args)':String(plan.code),args:adapter?{...publicPlan,tool}:plan.args??{},timeoutMs:plan.timeoutMs??10000,planHash:createHash('sha256').update(JSON.stringify({taskId,plan:publicPlan})).digest('hex')};
   }
-  initialize(){this.compiler.initialize(this.options.resourcePath);}
   registerHost(){
     for(const type of ['hello','heartbeat','terminal','probeResult'])onNet(this.options.resourceName+':mcp:v1:'+type,(raw:unknown)=>{const source=Number((globalThis as unknown as {source:unknown}).source);if(typeof raw==='string')this.clients.receive(source,type,raw);});
     on('playerJoining',()=>this.players.set(Number((globalThis as unknown as {source:unknown}).source),randomUUID()));
@@ -154,10 +151,10 @@ export class RuntimeService {
     });
   }
   hasTool(name:string){return Object.hasOwn(this.registry,name);}
-  tools(){return Object.entries(this.registry).map(([name,{inputSchema,outputSchema}])=>({name,description:`FiveM ${name}`,inputSchema,outputSchema}));}
-  call(name:string,args:Record<string,unknown>,sessionId:string,context?:ConfirmationContext){return this.registry[name]!.handler(args,sessionId,context);} 
+  tools(){return Object.entries(this.registry).map(([name,{inputSchema,outputSchema}])=>({name,description:name==='execute_js'?'Run an ES2022 JavaScript async function body with args. After await, access server natives/exports inside a synchronous mcp.host(callback). No TypeScript or module imports.':`FiveM ${name}`,inputSchema,outputSchema}));}
+  call(name:string,args:Record<string,unknown>,sessionId:string,context?:ConfirmationContext){return this.registry[name]!.handler(args,sessionId,context);}
   private refreshDependencies(){this.dependencies=Object.entries(versions).map(([resource,expectedVersion])=>{const state=GetResourceState(resource),version=GetResourceMetadata(resource,'version',0)||null;return {resource,version,expectedVersion,epoch:state==='started'?String(this.resources.epoch(resource)):null,state:state==='missing'?'missing':state!=='started'?'stopped':version!==expectedVersion?'version_mismatch':'detected',methods:dependencyMethods(resource,state==='started'&&version===expectedVersion,this.clients.snapshots().some(client=>client.ready))};});}
-  status(){return {service:'fivem-mcp',resourceName:this.options.resourceName,resourceEpoch:this.options.resourceEpoch,buildId:this.options.buildId,runtime:{node:process.version,platform:process.platform,artifact:null},listener:{host:'127.0.0.1',port:this.options.config.port,path:'/mcp'},compiler:this.compiler.status(),clients:this.clients.snapshots(),dependencies:this.dependencies,logs:[this.logs.coverage(),...this.clients.snapshots().map(c=>this.clientLogs.coverage(c.clientId))],queue:this.tasks.overview()};}
+  status(){return {service:'fivem-mcp',resourceName:this.options.resourceName,resourceEpoch:this.options.resourceEpoch,buildId:this.options.buildId,runtime:{node:process.version,platform:process.platform,artifact:null},listener:{host:'127.0.0.1',port:this.options.config.port,path:'/mcp'},javascript:{mode:'native' as const,syntax:'ES2022' as const,hostAccess:'explicit' as const},clients:this.clients.snapshots(),dependencies:this.dependencies,logs:[this.logs.coverage(),...this.clients.snapshots().map(c=>this.clientLogs.coverage(c.clientId))],queue:this.tasks.overview()};}
   private async handleCall(name:string,args:Record<string,unknown>,sessionId:string,context?:ConfirmationContext){
     if(name==='reference'){try{return output({ok:true,data:await this.reference.search(args as unknown as {query:string})});}catch{return output({ok:false,error:error('REFERENCE_UNAVAILABLE','Reference sources unavailable','not_applicable','read')});}}
     if(name==='status'){try{await this.options.host.run(()=>this.refreshDependencies());}catch{return output({ok:false,error:error('HOST_UNAVAILABLE','Dependency status could not be refreshed','not_applicable','read')});}const data=this.status();if(args.clientId!==undefined)data.clients=data.clients.filter(c=>c.clientId===args.clientId);return output({ok:true,data});}
@@ -210,7 +207,7 @@ export class RuntimeService {
     if(!binding)return output({ok:false,error:error('TARGET_UNAVAILABLE','No ready client binding')});
     try {bounded(args.args??{});if(Buffer.byteLength(String(args.code),'utf8')>65536)throw new Error('INPUT_TOO_LARGE');}
     catch(e){return output({ok:false,error:error(String(e).includes('INPUT_TOO_COMPLEX')?'INPUT_TOO_COMPLEX':'INPUT_TOO_LARGE')});}
-    const accepted=this.tasks.submit({sessionId,tool:name as 'execute_ts'|'execute_lua'|'resource'|'esx'|'qbcore'|'ox',target:{binding,...(playerId===undefined?{}:{playerId,playerConnectionId}),...(dependency?{resource:dependency,dependencyEpoch}:name==='resource'?{resource:String(args.name),dependencyEpoch:String(this.resources.epoch(String(args.name)))}:{})},payload:{...args,_sessionId:sessionId,args:args.args??(['esx','qbcore','ox'].includes(name)?[]:{}),timeoutMs:args.timeoutMs??10000},timeoutMs:args.timeoutMs as number|undefined});
+    const accepted=this.tasks.submit({sessionId,tool:name as 'execute_js'|'execute_lua'|'resource'|'esx'|'qbcore'|'ox',target:{binding,...(playerId===undefined?{}:{playerId,playerConnectionId}),...(dependency?{resource:dependency,dependencyEpoch}:name==='resource'?{resource:String(args.name),dependencyEpoch:String(this.resources.epoch(String(args.name)))}:{})},payload:{...args,_sessionId:sessionId,args:args.args??(['esx','qbcore','ox'].includes(name)?[]:{}),timeoutMs:args.timeoutMs??10000},timeoutMs:args.timeoutMs as number|undefined});
     if(!accepted.ok)return output(accepted as unknown as Record<string,unknown>);
     const until=performance.now()+1000;
     let task=accepted.task;
@@ -218,5 +215,5 @@ export class RuntimeService {
     return ['failed','cancelled','unknown'].includes(task.state)?output({ok:false,error:task.error,task}):output({ok:true,data:task});
   }
   sessionClosed(id:string){this.confirmations.close(id);this.tasks.sessionClosed(id);}
-  async stop(){this.stopped=true;clearInterval(this.maintenance);this.clients.stop();this.clientLogs.stop();this.reference.stop();this.confirmations.close();this.compiler.stop();this.resources.stop();this.logs.stop();await this.tasks.stop();}
+  async stop(){this.stopped=true;clearInterval(this.maintenance);this.clients.stop();this.clientLogs.stop();this.reference.stop();this.confirmations.close();this.resources.stop();this.logs.stop();await this.tasks.stop();}
 }

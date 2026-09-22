@@ -48,8 +48,8 @@ function parseEvidence(lines) {
  * @param {string} options.bundlePath absolute path to the built resource bundle
  * @param {string} [options.resourceName] value `GetCurrentResourceName` returns
  * @param {string} [options.resourcePath] value `GetResourcePath` returns; the
- *   resource uses it to locate `dist/compiler-runtime.cjs`, so a test that exercises
- *   compilation must point it at the built artifact directory
+ *   resource uses it to locate configuration, so integration tests must
+ *   point it at the built artifact directory
  * @param {Record<string, string>} [options.env] extra process env for the bundle
  */
 export function createFiveMHost({ bundlePath, resourceName = "fivem-mcp", resourcePath = null, env = {} } = {}) {

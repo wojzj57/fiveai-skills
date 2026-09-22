@@ -5,6 +5,8 @@ import { join } from "node:path";
 import test, { after, before } from "node:test";
 import { pathToFileURL } from "node:url";
 import { build } from "esbuild";
+import { readFile } from 'node:fs/promises';
+import vm from 'node:vm';
 
 const RESOURCE_EPOCH = "00000000-0000-4000-8000-000000000001";
 const CLIENT_EPOCH = "00000000-0000-4000-8000-000000000002";
@@ -39,6 +41,37 @@ before(async () => {
 
 after(async () => {
   if (buildRoot) await rm(buildRoot, { recursive: true, force: true });
+});
+
+test('real client entry boots without browser globals and sends hello on a FiveM tick', async () => {
+  const messages=[], ticks=[], network=new Map(), local=new Map();
+  let time=0, inTick=false, reads=0;
+  const context={
+    GetCurrentResourceName:()=> 'renamed-resource', GetGameTimer:()=>time,
+    emitNet:(name,raw)=>messages.push({name,message:JSON.parse(raw)}),
+    emit:()=>{},on:(name,fn)=>local.set(name,fn),onNet:(name,fn)=>network.set(name,fn),setTick:fn=>ticks.push(fn),
+    source:65535,
+    ReadNative:()=>{assert.equal(inTick,true);reads++;return 42;},
+    console:{log:()=>{}},setTimeout,clearTimeout,
+  };
+  vm.runInNewContext(await readFile(join(buildRoot,'client-entry.js'),'utf8'),context);
+  assert.equal(messages[0].message.type,'hello');
+  assert.equal(messages[0].name,'renamed-resource:mcp:v1:hello');
+  time=2100;ticks.forEach(fn=>fn());
+  assert.equal(messages.length,2);
+  const value=binding({clientEpoch:messages[0].message.payload.clientEpoch});
+  network.get('renamed-resource:mcp:v1:bind')(bindFrame(value));
+  local.get('renamed-resource:mcp:v1:local:clientLuaReady')(JSON.stringify({binding:value}));
+  const code='(async function(args,mcp){ ReadNative(); await Promise.resolve(); return await mcp.host(() => ReadNative()); })';
+  network.get('renamed-resource:mcp:v1:execute')(JSON.stringify({v:1,type:'execute',binding:value,taskId:RESOURCE_EPOCH+':1',payload:{kind:'js',code,args:{},timeoutMs:1000,planHash:HASH}}));
+  for(let i=0;i<8;i++){
+    inTick=true;try{ticks.forEach(fn=>fn());}finally{inTick=false;}
+    await new Promise(resolve=>setImmediate(resolve));
+  }
+  assert.equal(reads,2);
+  const terminal=messages.find(x=>x.message.type==='terminal').message;
+  assert.deepEqual(terminal.payload.result.values,[42]);
+  local.get('onClientResourceStop')('renamed-resource');
 });
 
 function fakeClock() {

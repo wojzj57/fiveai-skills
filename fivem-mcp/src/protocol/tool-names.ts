@@ -9,7 +9,7 @@ export const TOOL_NAMES = [
   "status",
   "queue",
   "execute_lua",
-  "execute_ts",
+  "execute_js",
   "resource",
   "logs",
   "esx",
@@ -50,7 +50,7 @@ export const ControlToolSchema = z.enum(CONTROL_TOOLS);
  */
 export const FIFO_TOOLS = [
   "execute_lua",
-  "execute_ts",
+  "execute_js",
   "resource",
   "esx",
   "qbcore",

@@ -47,13 +47,12 @@ try{
  const identity=getBuildIdentity(repoRoot);
  const common={bundle:true,target:'node22',logLevel:'warning',metafile:true};
  const server=await build({...common,entryPoints:[join(source,'src/server.ts')],outfile:join(staging,'dist/server.js'),platform:'node',format:'cjs',define:{__HTTP_MCP_BUILD__:JSON.stringify(identity.digest)}});
- const compiler=await build({...common,entryPoints:[join(source,'src/compiler.ts')],outfile:join(staging,'dist/compiler-runtime.cjs'),platform:'node',format:'cjs'});
  await build({...common,entryPoints:[join(source,'src/client/main.ts')],outfile:join(staging,'dist/client.js'),platform:'browser',format:'iife',target:'es2022'});
  for(const file of ['fxmanifest.lua','README.md','LICENSE','NOTICE'])await cp(join(source,file),join(staging,file));
  for(const dir of ['lua','data','config'])await cp(join(source,dir),join(staging,dir),{recursive:true});
  // Include the exact licenses of bundled npm packages, without workspace dependencies.
  const packaged=new Set();
- for(const input of [...Object.keys(server.metafile.inputs),...Object.keys(compiler.metafile.inputs)]){
+ for(const input of Object.keys(server.metafile.inputs)){
   if(!input.includes('node_modules'))continue;let dir=dirname(resolve(input));
   while(dir!==dirname(dir)){if(existsSync(join(dir,'package.json'))){const manifest=JSON.parse(await readFile(join(dir,'package.json'),'utf8'));if(manifest.name&&manifest.version)break;}dir=dirname(dir);}
   if(!existsSync(join(dir,'package.json'))||packaged.has(dir))continue;packaged.add(dir);

@@ -6,7 +6,7 @@
  * the simulated FiveM runtime in ./helpers/fivem-host-shim.mjs, which is
  * enough to pin the parts that do not need a host: the HTTP boundary, the
  * session rules, the host-tick discipline and the stop/rebind path. Whether
- * FXServer itself accepts the SDK, the listener or the compiler is only
+ * FXServer itself accepts the SDK, the listener or the executor is only
  * answerable on a real FXServer and stays NOT_EXECUTED here — see
  * fivem-mcp/http-mcp/README.md.
  *
@@ -186,7 +186,7 @@ before(async () => {
 
   port = await reserveFreePort();
   // `resourcePath` is what GetResourcePath answers: the resource resolves
-  // `dist/compiler-runtime.cjs` from it, exactly as it does on a real host.
+  // resource-owned configuration from it, exactly as it does on a real host.
   await writeFile(join(artifact,"config","config.json"),JSON.stringify({port}));
   host = createFiveMHost({ bundlePath, resourcePath: artifact });
   await host.waitForLine("ready");
@@ -241,7 +241,7 @@ test("MCP initialize negotiates a session and lists formal tools with no probes"
   const parsed = JSON.parse(listed.text);
   assert.deepEqual(
     parsed.result.tools.map((tool) => tool.name).sort(),
-    ["esx", "execute_lua", "execute_ts", "logs", "ox", "qbcore", "queue", "reference", "resource", "status"],
+    ["esx", "execute_js", "execute_lua", "logs", "ox", "qbcore", "queue", "reference", "resource", "status"],
   );
 
   const opened = host.evidence().filter((entry) => entry.tag === "session-open");
@@ -522,15 +522,21 @@ test("the session ceiling refuses an over-limit initialize without evicting live
   assert.equal(status.result.structuredContent.data.service,"fivem-mcp");
 });
 
-test('formal TS executes through the FIFO and task query preserves encoded values', async()=>{
+test('native JS executes through the FIFO and task query preserves encoded values', async()=>{
  const session=await openSession();
- const reply=await rpc('tools/call',{name:'execute_ts',arguments:{side:'server',code:'const n: number = args.value; return n + GetNumResources();',args:{value:39}}},{session,id:101});
+ const reply=await rpc('tools/call',{name:'execute_js',arguments:{side:'server',code:'const n = args.value; return n + GetNumResources();',args:{value:39}}},{session,id:101});
  const body=JSON.parse(reply.text).result;assert.equal(body.isError,false,reply.text);assert.equal(body.structuredContent.data.state,'succeeded');assert.deepEqual(body.structuredContent.data.result,{kind:'values',values:[42]});
  const id=body.structuredContent.data.taskId;
  const query=await rpc('tools/call',{name:'queue',arguments:{action:'status',taskId:id}},{session,id:102});
  assert.equal(JSON.parse(query.text).result.structuredContent.data.task.taskId,id);
- const bad=await rpc('tools/call',{name:'execute_ts',arguments:{side:'server',code:'return require("x");'}},{session,id:103});
- assert.equal(JSON.parse(bad.text).result.structuredContent.error.code,'COMPILE_FAILED');
+ const old=await rpc('tools/call',{name:'execute_ts',arguments:{side:'server',code:'return 1;'}},{session,id:110});
+ assert.equal(JSON.parse(old.text).error.code,-32602);
+ const typed=await rpc('tools/call',{name:'execute_js',arguments:{side:'server',code:'const n: number=1;return n;'}},{session,id:111});
+ assert.equal(JSON.parse(typed.text).result.structuredContent.error.code,'JAVASCRIPT_INVALID');
+ const asyncNative=await rpc('tools/call',{name:'execute_js',arguments:{side:'server',code:'await Promise.resolve(); return await mcp.host(() => GetNumResources());'}},{session,id:112});
+ assert.equal(JSON.parse(asyncNative.text).result.structuredContent.data.state,'succeeded');
+ const bad=await rpc('tools/call',{name:'execute_js',arguments:{side:'server',code:'return require("x");'}},{session,id:103});
+ assert.equal(JSON.parse(bad.text).result.structuredContent.error.code,'JAVASCRIPT_INVALID');
  await request({method:'DELETE',headers:{[SESSION_HEADER]:session}});
 });
 
@@ -562,7 +568,7 @@ test('HTTP client execution binds the genuine network source and settles matchin
   });
   host.networkFrom(7,'fivem-mcp:mcp:v1:hello',JSON.stringify({v:1,type:'hello',payload:{clientEpoch:epoch,lua:true,js:true}}));
   await delay(20);
-  const result=JSON.parse((await callTool('execute_ts',session,{side:'client',clientId:7,code:'return 42;'})).text).result.structuredContent;
+  const result=JSON.parse((await callTool('execute_js',session,{side:'client',clientId:7,code:'return 42;'})).text).result.structuredContent;
   assert.equal(result.ok,true,JSON.stringify(result));assert.equal(result.data.target.binding.clientId,7);assert.deepEqual(result.data.result.values,[42]);
   const status=JSON.parse((await callTool('status',session,{clientId:7})).text).result.structuredContent;
   assert.equal(status.ok,true,JSON.stringify(status));assert.equal(status.data.clients.length,1);

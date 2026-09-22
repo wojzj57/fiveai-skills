@@ -29,8 +29,8 @@ test('config is strict, bounded and defaults only when absent', async () => {
 
 test('schema publishes self-contained 2020 schemas and validates tuple arguments', async () => {
   const { validate, schema } = await import('../http-mcp/src/shared/schema.ts');
-  assert.equal(validate('execute_tsInput',{side:'server',code:'return 1;'}),true);
-  assert.equal(validate('execute_tsInput',{side:'server',clientId:1,code:'return 1;'}),false);
-  assert.equal(validate('execute_tsInput',{side:'server',code:'return 1;',approved:true}),false);
-  assert.ok(schema('execute_tsOutput').$defs.Task);
+  assert.equal(validate('execute_jsInput',{side:'server',code:'return 1;'}),true);
+  assert.equal(validate('execute_jsInput',{side:'server',clientId:1,code:'return 1;'}),false);
+  assert.equal(validate('execute_jsInput',{side:'server',code:'return 1;',approved:true}),false);
+  assert.ok(schema('execute_jsOutput').$defs.Task);
 });

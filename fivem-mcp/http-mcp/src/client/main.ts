@@ -1,4 +1,5 @@
 import { ClientProtocol } from "./protocol.ts";
+import { runOnHost } from '../shared/javascript.ts';
 
 interface ClientGlobals {
   source?: number;
@@ -28,16 +29,19 @@ function uuid(): string {
 const host = globalThis as unknown as ClientGlobals;
 const resourceName = host.GetCurrentResourceName();
 const prefix = `${resourceName}:mcp:v1:`;
+let stopped=false;
+const work: {run:()=>unknown;resolve:(value:unknown)=>void;reject:(reason:Error)=>void;started:number}[]=[];
+const scheduler={run:<T>(fn:()=>T):Promise<T>=>new Promise((resolve,reject)=>{
+  if(stopped||work.length>=32){reject(new Error('HOST_UNAVAILABLE'));return;}
+  work.push({run:fn,resolve:resolve as (value:unknown)=>void,reject,started:host.GetGameTimer()>>>0});
+})};
 const protocol = new ClientProtocol({
   resourceName,
   clientEpoch: uuid(),
   clock: () => host.GetGameTimer() >>> 0,
   send: (eventName, raw) => host.emitNet(eventName, raw),
   sendLocal: (eventName, raw) => host.emit(eventName, raw),
-  executeJs: async (code, args) => {
-    const create = new Function(`return (${code});`) as () => (args: unknown) => unknown;
-    return [await create()(args)];
-  },
+  executeJs: async (code, args) => [await runOnHost(code,args,scheduler)],
 });
 
 for (const type of ["bind", "execute", "terminalAck", "probe"] as const) {
@@ -50,7 +54,17 @@ host.on(`${prefix}local:clientLuaReady`, (raw) => {
   if (typeof raw === "string") protocol.luaReady(raw);
 });
 host.on("onClientResourceStop", (name) => {
-  if (name === resourceName) protocol.stop();
+  if (name === resourceName) {
+    stopped=true;protocol.stop();
+    for(const item of work.splice(0))item.reject(new Error('HOST_UNAVAILABLE'));
+  }
 });
-host.setTick(() => protocol.tick());
+host.setTick(() => {
+  if(stopped)return;
+  for(const item of work.splice(0,16)){
+    if(((host.GetGameTimer()-item.started)>>>0)>2000){item.reject(new Error('HOST_UNAVAILABLE'));continue;}
+    try{item.resolve(item.run());}catch(error){item.reject(error instanceof Error?error:new Error(String(error)));}
+  }
+  protocol.tick();
+});
 protocol.start();

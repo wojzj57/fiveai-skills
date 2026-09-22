@@ -589,7 +589,7 @@ test("the task chain payloads carry their required semantics", () => {
     TaskDispatchSchema.safeParse({
       taskId: UUID,
       target: { side: "client", clientId: 4, clientEpoch: EPOCH },
-      tool: "execute_ts",
+      tool: "execute_js",
       arguments: { side: "client", clientId: 4, code: "return args" },
       deadlineMs: 30_000,
       timeoutMs: 30_000,
@@ -600,7 +600,7 @@ test("the task chain payloads carry their required semantics", () => {
     TaskDispatchSchema.safeParse({
       taskId: UUID,
       target: { side: "server" },
-      tool: "execute_ts",
+      tool: "execute_js",
       arguments: {},
       deadlineMs: 0,
       timeoutMs: 30_000,
@@ -768,7 +768,7 @@ test("control channel serves reads and controls; resource is read-only there (RF
     }).success,
     true,
   );
-  for (const tool of ["execute_lua", "execute_ts", "esx", "qbcore", "ox"]) {
+  for (const tool of ["execute_lua", "execute_js", "esx", "qbcore", "ox"]) {
     assert.equal(
       ControlRequestSchema.safeParse({ requestId: UUID, tool, arguments: {} }).success,
       false,

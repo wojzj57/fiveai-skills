@@ -24,7 +24,7 @@ declare function GetGameTimer(): number;
 /**
  * Absolute filesystem path of a resource (RFC §8.1). It is an execution native
  * over live host state, so it is only ever called from the host tick — the
- * compiler module's file path is resolved that way.
+ * resource directory is resolved that way.
  */
 declare function GetResourcePath(resourceName: string): string;
 declare function LoadResourceFile(resourceName: string, fileName: string): string | null;

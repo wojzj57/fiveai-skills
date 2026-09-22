@@ -42,8 +42,8 @@ test("the build produces the formal HTTP MCP resource artifact", () => {
   assert.equal(existsSync(join(artifactDirectory, "dist", "server.js")), true, "the formal server bundle is staged");
   assert.equal(
     existsSync(join(artifactDirectory, "dist", "compiler-runtime.cjs")),
-    true,
-    "the ordinary compiler module is staged as its own file",
+    false,
+    "native JS needs no runtime compiler module",
   );
 
   const manifest = readFileSync(manifestPath, "utf8");
@@ -51,24 +51,14 @@ test("the build produces the formal HTTP MCP resource artifact", () => {
   assert.match(manifest, /lua\/server\.lua/);
 });
 
-test("the TypeScript compiler is only in the ordinary compiler artifact, never in the server bundle", () => {
-  // RFC §8.1/§14: "compilation does not run on the HTTP or host thread" is a
-  // property of the artifact split, so both directions are asserted. The marker
-  // is a compiler-internal symbol; the word "TypeScript" is not used because it
-  // appears in tool descriptions.
+test("the resource executes native JS without a compiler or compilation worker", () => {
   const server = readFileSync(join(artifactDirectory, "dist", "server.js"), "utf8");
-  assert.doesNotMatch(server, /node:worker_threads|new Worker\(/);
-  const compiler = readFileSync(join(artifactDirectory, "dist", "compiler-runtime.cjs"), "utf8");
-
-  assert.equal(/createSourceFile|transpileModule/.test(server), false, "the server bundle must not carry the compiler");
-  assert.equal(/createSourceFile/.test(compiler), true, "the ordinary compiler artifact must carry the compiler");
-  assert.ok(
-    compiler.length > server.length,
-    `the compiler artifact (${compiler.length}B) must be the larger one, not the server bundle (${server.length}B)`,
-  );
-
-  const script = readFileSync(buildScript, "utf8");
-  assert.match(script, /['"]dist\/compiler-runtime\.cjs['"]/, "the ordinary compiler artifact is part of the managed file whitelist");
+  const client = readFileSync(join(artifactDirectory, "dist", "client.js"), "utf8");
+  assert.doesNotMatch(server, /node:worker_threads|new Worker\(|transpileModule|createSourceFile/);
+  assert.doesNotMatch(client, /transpileModule|createSourceFile/);
+  assert.equal(existsSync(join(artifactDirectory,"dist/compiler-runtime.cjs")),false);
+  assert.match(server, /execute_js/);
+  assert.doesNotMatch(server, /execute_ts/);
 });
 
 test("tests build into a temporary fixture, never over the mounted default output", () => {

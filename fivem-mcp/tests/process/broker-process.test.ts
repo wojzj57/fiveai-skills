@@ -467,7 +467,7 @@ test("stdio chain: initialize, tools/list, and a real tools/call status (RFC §1
     const names = toolsResponse.result?.tools?.map((tool) => tool.name) ?? [];
     // Discovery is independent of a live FiveM bridge. Every supported
     // tool remains visible; unavailable targets fail at invocation time.
-    assert.deepEqual(names, ["status", "queue", "execute_lua", "execute_ts", "resource", "logs", "esx", "qbcore", "ox", "reference"]);
+    assert.deepEqual(names, ["status", "queue", "execute_lua", "execute_js", "resource", "logs", "esx", "qbcore", "ox", "reference"]);
     assert.equal(names.includes("screenshot"), false);
 
     const status = await awaitStatusOk(mcp);

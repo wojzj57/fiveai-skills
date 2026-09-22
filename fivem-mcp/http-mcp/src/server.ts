@@ -475,7 +475,6 @@ function boot():void {
  service.registerHost();
  setImmediate(()=>{
   if(phase!=='booting')return;
-  service!.initialize();
   const server=createServer({maxHeaderSize:16384},handleRequest);httpServer=server;
   server.on('connection',socket=>{if(sockets.size>=64){socket.end('HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');return;}sockets.add(socket);socket.once('close',()=>sockets.delete(socket));});
   server.on('clientError',(error,socket)=>{if((error as NodeJS.ErrnoException).code==='HPE_HEADER_OVERFLOW')socket.end('HTTP/1.1 431 Request Header Fields Too Large\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');else socket.destroy();});

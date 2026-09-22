@@ -1,7 +1,7 @@
 export type JsonPrimitive = null | boolean | number | string;
 export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
 
-export type TaskTool = "execute_lua" | "execute_ts" | "resource" | "esx" | "qbcore" | "ox";
+export type TaskTool = "execute_lua" | "execute_js" | "resource" | "esx" | "qbcore" | "ox";
 export type TaskState = "queued" | "running" | "succeeded" | "failed" | "cancelled" | "unknown";
 export type TaskPhase =
   | "validation"
@@ -34,7 +34,7 @@ export type TaskErrorCode =
   | "TASK_NOT_UNKNOWN"
   | "RECOVERY_UNPROVEN"
   | "HOST_UNAVAILABLE"
-  | "COMPILER_UNAVAILABLE"
+  | "JAVASCRIPT_INVALID"
   | "COMPILE_FAILED"
   | "PREPARATION_TIMEOUT"
   | "EXECUTION_FAILED"

@@ -14,7 +14,7 @@ const descriptions: Record<ToolName, string> = {
   status: "Report the broker, bridge, client, queue, recovery, and capability state.",
   queue: "Inspect, cancel an un-dispatched task, or safely reconcile a retained task.",
   execute_lua: "Run a bounded Lua function body on the selected FiveM server or client through the global FIFO.",
-  execute_ts: "Compile and run a bounded TypeScript function body on the selected FiveM server or client through the global FIFO.",
+  execute_js: "Run a bounded JavaScript function body on the selected FiveM server or client through the global FIFO.",
   resource: "Read a resource state, or serially start, stop, or restart one named resource.",
   logs: "Query bounded, filtered server and client diagnostic log records.",
   esx: "Call an allowlisted ESX framework or player method through the global FIFO.",

@@ -3,7 +3,7 @@ import test from "node:test";
 import {
   EsxInputSchema,
   ExecuteLuaInputSchema,
-  ExecuteTsInputSchema,
+  ExecuteJsInputSchema,
   LogsInputSchema,
   OxInputSchema,
   QbcoreInputSchema,
@@ -39,8 +39,8 @@ test("queue actions carry their required fields", () => {
   rejects(QueueInputSchema, { action: "purge" }, "unknown action");
 });
 
-test("execute_lua and execute_ts enforce side/clientId pairing and defaults", () => {
-  for (const schema of [ExecuteLuaInputSchema, ExecuteTsInputSchema]) {
+test("execute_lua and execute_js enforce side/clientId pairing and defaults", () => {
+  for (const schema of [ExecuteLuaInputSchema, ExecuteJsInputSchema]) {
     const parsed = schema.parse({ side: "server", code: "return 1" });
     assert.deepEqual(parsed.args, {});
     assert.equal(parsed.timeoutMs, 30_000);
@@ -84,12 +84,12 @@ test("code is limited by UTF-8 bytes, not characters", () => {
 
 test("encoded args are limited to 128 KiB", () => {
   accepts(
-    ExecuteTsInputSchema,
+    ExecuteJsInputSchema,
     { side: "server", code: "return args", args: { blob: "x".repeat(100_000) } },
     "args within budget",
   );
   rejects(
-    ExecuteTsInputSchema,
+    ExecuteJsInputSchema,
     { side: "server", code: "return args", args: { blob: "x".repeat(140_000) } },
     "args over budget",
   );
@@ -100,7 +100,7 @@ test("deep or oversized args fail as structured validation errors, not RangeErro
   // but exceed the defined input depth policy.
   let deep: unknown = 0;
   for (let index = 0; index < 2_000; index += 1) deep = [deep];
-  for (const schema of [ExecuteLuaInputSchema, ExecuteTsInputSchema]) {
+  for (const schema of [ExecuteLuaInputSchema, ExecuteJsInputSchema]) {
     const result = schema.safeParse({ side: "server", code: "return args", args: deep });
     assert.equal(result.success, false, "deep args are rejected");
   }

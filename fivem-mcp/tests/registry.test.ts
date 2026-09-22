@@ -21,7 +21,7 @@ test("the public tool surface is exactly the ten RFC tools", () => {
     "status",
     "queue",
     "execute_lua",
-    "execute_ts",
+    "execute_js",
     "resource",
     "logs",
     "esx",
