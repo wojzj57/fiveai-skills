@@ -34,10 +34,13 @@ g.RegisterNetEvent=lambda name,fn:network.__setitem__(name,fn)
 g.AddEventHandler=lambda name,fn:local_handlers.__setitem__(name,fn)
 g.TriggerServerEvent=lambda name,raw:sent.append((name,json.loads(raw)))
 g.TriggerEvent=lambda name,*args: None
-g.SetInterval=lambda fn,ms:intervals.append(fn)
+g.SetTimeout=lambda ms,fn:intervals.append(fn)
 g.Citizen=lua.table_from({'CreateThread':lambda fn:fn(),'Await':lambda value:value})
 g.json=lua.table_from({'decode':lambda text,pos=1,null=None:to_lua(json.loads(text),null),'encode':lambda value:json.dumps(to_python(value),ensure_ascii=False,separators=(',',':'))})
 lua.execute(Path(sys.argv[1]).read_text(encoding='utf-8'))
+assert len(intervals)==1
+intervals.pop(0)()
+assert len(intervals)==1
 
 epoch='00000000-0000-4000-8000-000000000001'
 binding={'resourceEpoch':epoch,'clientId':7,'connectionId':'00000000-0000-4000-8000-000000000003','clientEpoch':'00000000-0000-4000-8000-000000000002'}
@@ -77,6 +80,9 @@ for sequence in range(3,36):
         rejected=True
         break
 assert rejected
+local_handlers['onClientResourceStop']('renamed-resource')
+intervals.pop(0)()
+assert len(intervals)==0
 print('PASS: Lua client source=65535 contract, dedupe, probe and adapter error mapping; actual FiveM host NOT_EXECUTED')
 `, "utf8");
   try {

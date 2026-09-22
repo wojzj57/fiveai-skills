@@ -3,6 +3,7 @@ import { ClientProtocol } from "./protocol.ts";
 interface ClientGlobals {
   source?: number;
   GetCurrentResourceName(): string;
+  GetGameTimer(): number;
   onNet(eventName: string, handler: (raw: unknown) => void): void;
   emitNet(eventName: string, raw: string): void;
   emit(eventName: string, raw: string): void;
@@ -30,6 +31,7 @@ const prefix = `${resourceName}:mcp:v1:`;
 const protocol = new ClientProtocol({
   resourceName,
   clientEpoch: uuid(),
+  clock: () => host.GetGameTimer() >>> 0,
   send: (eventName, raw) => host.emitNet(eventName, raw),
   sendLocal: (eventName, raw) => host.emit(eventName, raw),
   executeJs: async (code, args) => {

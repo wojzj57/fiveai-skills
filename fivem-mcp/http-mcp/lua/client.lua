@@ -290,7 +290,7 @@ RegisterNetEvent(prefix .. 'probe', function(raw)
     TriggerServerEvent(prefix .. 'probeResult', result)
 end)
 
-SetInterval(function()
+local function maintain()
     if stopped then return end
     local now = GetGameTimer()
     for _, taskId in ipairs(unackedOrder) do
@@ -299,7 +299,9 @@ SetInterval(function()
     end
     if rejection and now - rejection.lastSentAt >= RESEND_MS then sendTerminal(rejection) end
     trimAcked()
-end, 250)
+    SetTimeout(250, maintain)
+end
+SetTimeout(250, maintain)
 
 AddEventHandler('onClientResourceStop', function(name)
     if name ~= resource then return end

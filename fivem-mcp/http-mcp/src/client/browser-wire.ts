@@ -2,7 +2,7 @@ const MAX_RESULT_BYTES = 256 * 1024;
 const MAX_DEPTH = 32;
 const MAX_NODES = 10_000;
 const MAX_ITEMS = 1_024;
-const utf8 = new TextEncoder();
+import { utf8ByteLength } from '../../../src/protocol/utf8.ts';
 
 export type ClientWireValue =
   | null
@@ -30,7 +30,7 @@ function base64(bytes: Uint8Array): string {
 }
 
 export function byteLength(value: string): number {
-  return utf8.encode(value).byteLength;
+  return utf8ByteLength(value);
 }
 
 /** Browser/FiveM-client encoder. It deliberately has no Node Buffer dependency. */
