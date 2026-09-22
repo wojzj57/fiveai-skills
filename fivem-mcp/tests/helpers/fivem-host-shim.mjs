@@ -22,7 +22,7 @@
  */
 
 import { createRequire } from "node:module";
-import { copyFileSync, mkdtempSync, rmSync } from "node:fs";
+import { copyFileSync, mkdtempSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -101,6 +101,11 @@ export function createFiveMHost({ bundlePath, resourceName = "fivem-mcp", resour
 
   function installGlobals() {
     installGlobal("GetCurrentResourceName", () => resourceName);
+    installGlobal("LoadResourceFile", tickOnly("LoadResourceFile", (name, file) => {
+      if (name !== resourceName || resourcePath === null) throw new Error('Unknown resource');
+      try { return readFileSync(join(resourcePath, file), 'utf8'); }
+      catch (error) { if (error.code === 'ENOENT') return null; throw error; }
+    }));
     installGlobal("setTick", (handler) => {
       tickHandlers.push(handler);
     });

@@ -1,9 +1,5 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile, mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
 
 test('wire encoding preserves reserved keys and rejects accessors without invoking them', async () => {
   const { encodeValues } = await import('../http-mcp/src/shared/wire.ts');
@@ -18,17 +14,17 @@ test('wire encoding preserves reserved keys and rejects accessors without invoki
 
 test('config is strict, bounded and defaults only when absent', async () => {
   const { loadConfig } = await import('../http-mcp/src/shared/config.ts');
-  const dir=await mkdtemp(join(tmpdir(),'mcp-config-'));
-  try {
-    assert.deepEqual(loadConfig(dir),{port:30130,clientLogDirectories:[],referenceOnline:true});
-    await mkdir(join(dir,'config'));
-    await writeFile(join(dir,'config/config.json'),'{"port":30131}');
-    assert.equal(loadConfig(dir).port,30131);
-    await writeFile(join(dir,'config/config.json'),'{"port":"30131"}');
-    assert.throws(()=>loadConfig(dir),/config/i);
-    await writeFile(join(dir,'config/config.json'),'{"extra":true}');
-    assert.throws(()=>loadConfig(dir),/config/i);
-  } finally {await rm(dir,{recursive:true,force:true});}
+  const load = text => loadConfig('renamed-resource', (resource, file) => {
+    assert.equal(resource, 'renamed-resource');
+    assert.equal(file, 'config/config.json');
+    return text;
+  });
+  assert.deepEqual(load(null),{port:30130,clientLogDirectories:[],referenceOnline:true});
+  assert.equal(load('{"port":30131}').port,30131);
+  for (const text of ['', '{', '{"port":"30131"}', '{"extra":true}', '中'.repeat(6000)]) {
+    assert.throws(()=>load(text),/config/i);
+  }
+  assert.throws(()=>loadConfig('renamed-resource',()=>{throw new Error('read denied');}),/read denied/);
 });
 
 test('schema publishes self-contained 2020 schemas and validates tuple arguments', async () => {

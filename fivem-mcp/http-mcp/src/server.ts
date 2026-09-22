@@ -469,7 +469,7 @@ function createMcpServer(sessionId:string):McpServer {
 function boot():void {
  phase='booting';
  let resourcePath:string,config:Config;
- try{resourcePath=GetResourcePath(RESOURCE);config=loadConfig(resourcePath);HTTP_PORT=config.port;}
+ try{resourcePath=GetResourcePath(RESOURCE);config=loadConfig(RESOURCE);HTTP_PORT=config.port;}
  catch(error){phase='failed';report('config-error',{message:String(error)});return;}
  service=new RuntimeService({resourceName:RESOURCE,resourceEpoch:RESOURCE_EPOCH,buildId:__HTTP_MCP_BUILD__,resourcePath,config,host,sessionValid:id=>{const s=sessions.get(id);return !!s&&!s.closed&&(s.active>0||performance.now()-s.touchedAt<=1800000);},report});
  service.registerHost();

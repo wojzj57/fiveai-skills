@@ -27,6 +27,7 @@ declare function GetGameTimer(): number;
  * compiler module's file path is resolved that way.
  */
 declare function GetResourcePath(resourceName: string): string;
+declare function LoadResourceFile(resourceName: string, fileName: string): string | null;
 declare function emit(eventName: string, ...args: unknown[]): void;
 declare function RegisterConsoleListener(handler: (channel: string, message: string) => void): void;
 declare function GetResourceByFindIndex(index: number): string;
