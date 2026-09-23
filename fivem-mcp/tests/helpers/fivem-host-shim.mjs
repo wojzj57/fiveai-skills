@@ -132,6 +132,7 @@ export function createFiveMHost({ bundlePath, resourceName = "fivem-mcp", resour
     installGlobal("GetResourceMetadata",tickOnly("GetResourceMetadata",name=>metadata.get(name)??null));
     installGlobal("emit",tickOnly("emit",(name,...args)=>{for(const fn of events.get(name)??[])fn(...args);}));
     installGlobal("RegisterConsoleListener",fn=>{consoleListener=fn;});
+    installGlobal("GetConsoleBuffer",tickOnly("GetConsoleBuffer",()=>"Running in FxDK mode\nserver history before MCP\n"));
     installGlobal("GetGameTimer", tickOnly("GetGameTimer", () => Date.now() - startedAt));
     // RFC §8.1 resolves the compiler module's file path through this native, so
     // it is tick-only here too: a resource that read it off the tick would fail
@@ -232,6 +233,7 @@ export function createFiveMHost({ bundlePath, resourceName = "fivem-mcp", resour
     onLocal(event,fn){const handlers=events.get(event)??[];handlers.push(fn);events.set(event,handlers);},
     local(event,raw){for(const fn of events.get(event)??[])fn(raw);},
     setDependency(name,version,api){resourceStates.set(name,'started');metadata.set(name,version);globalThis.exports[name]=api;},
+    setResourceState(name,state){if(state===null){resourceStates.delete(name);metadata.delete(name);delete globalThis.exports[name];}else resourceStates.set(name,state);},
     onNetwork(fn){netListener=fn;},
     networkFrom(id,event,raw){const previous=globalThis.source;globalThis.source=id;try{for(const fn of events.get(event)??[])fn(raw);}finally{globalThis.source=previous;}},
     log(channel,message){consoleListener?.(channel,message);},

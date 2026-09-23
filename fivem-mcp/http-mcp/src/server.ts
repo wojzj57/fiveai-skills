@@ -383,7 +383,7 @@ async function routeRequest(req: IncomingMessage, res: ServerResponse): Promise<
     // the same rejection inside the handler would come back as HTTP 200.
     if (method === "tools/call") {
       const name = messageToolName(parsed);
-      if (name !== undefined && !service!.hasTool(name)) {
+      if (name !== undefined && !(await service!.hasTool(name))) {
         counters.unknownTool += 1;
         sendRpcError(res, 400, messageId(parsed), JSON_RPC.invalidParams, `unknown tool: ${name}`);
         return;
@@ -405,7 +405,7 @@ function handleRequest(req: IncomingMessage, res: ServerResponse): void {
   if(activeRequests>=64||globalTokens<1){sendStatus(res,429,"request limit");return;}
   globalTokens--;activeRequests++;res.once("close",()=>activeRequests--);
   const path = (req.url ?? "/").split("?")[0] ?? "/";
-  if (path !== FROZEN.httpPath) {
+  if (path !== FROZEN.httpPath && path !== `${FROZEN.httpPath}/client-logs`) {
     counters.notFound += 1;
     sendStatus(res, 404, "not found");
     return;
@@ -418,6 +418,21 @@ function handleRequest(req: IncomingMessage, res: ServerResponse): void {
   if (!isAllowedOrigin(req.headers.origin, HTTP_PORT)) {
     counters.rejectedOrigin += 1;
     sendStatus(res, 403, "origin not allowed");
+    return;
+  }
+  if(path===`${FROZEN.httpPath}/client-logs`){
+    if(req.method!=='POST'){sendStatus(res,405,'method not allowed',{allow:'POST'});return;}
+    void readBody(req).then(body=>{
+      if(!body.ok){respondBodyFailure(res,body.reason);return;}
+      if(Buffer.byteLength(body.text)>65_536){sendStatus(res,413,'client log batch too large');return;}
+      let input:unknown;try{input=JSON.parse(body.text);}catch{sendStatus(res,400,'invalid client log batch');return;}
+      if(typeof input!=='object'||input===null||Array.isArray(input)){sendStatus(res,400,'invalid client log batch');return;}
+      const batch=input as Record<string,unknown>;
+      if(Object.keys(batch).sort().join(',')!=='endOffset,fileId,lines,marker,startOffset'||typeof batch.marker!=='string'||typeof batch.fileId!=='string'||typeof batch.startOffset!=='number'||typeof batch.endOffset!=='number'||!Array.isArray(batch.lines)||!batch.lines.every(line=>typeof line==='string')){sendStatus(res,400,'invalid client log batch');return;}
+      const result=service!.ingestClientLogs(batch.marker,batch.fileId,batch.startOffset,batch.endOffset,batch.lines as string[]);
+      if(!result.ok){sendStatus(res,409,'client log binding unavailable');return;}
+      sendJson(res,200,{nextOffset:result.nextOffset});
+    }).catch(()=>sendStatus(res,500,'client log ingestion failed'));
     return;
   }
   // §4: POST carries JSON-RPC and DELETE closes the session. GET is not
@@ -452,10 +467,10 @@ function handleRequest(req: IncomingMessage, res: ServerResponse): void {
 function createMcpServer(sessionId:string):McpServer {
  const server=new McpServer({name:'fiveai-mcp',version:'0.1.0'},{capabilities:{tools:{listChanged:false}}});
  server.oninitialized=()=>{const entry=sessions.get(sessionId);if(entry&&!entry.closed)entry.initialized=true;};
- server.setRequestHandler(ListToolsRequestSchema,()=>({tools:service!.tools()}));
+ server.setRequestHandler(ListToolsRequestSchema,async()=>({tools:await service!.tools()}));
  server.setRequestHandler(CallToolRequestSchema,async(request,extra)=>{
    const name=request.params.name,args=request.params.arguments??{};
-   if(!service!.hasTool(name)||(!validate(name+'Input',args)||(name==='reference'&&!String(args.query).trim())))throw new McpError(ErrorCode.InvalidParams,'Unknown tool or invalid arguments');
+   if(!(await service!.hasTool(name))||(!validate(name+'Input',args)||(name==='reference'&&!String(args.query).trim())))throw new McpError(ErrorCode.InvalidParams,'Unknown tool or invalid arguments');
    const result=await service!.call(name,args,sessionId,{server,requestId:extra.requestId,signal:AbortSignal.any([extra.signal,requestSignals.get(sessionId+':'+String(extra.requestId))??extra.signal])});
    if(!validate(name+'Output',result.structuredContent)||Buffer.byteLength(JSON.stringify(result))>1048576){
      const value={ok:false,error:{code:'RESULT_TOO_LARGE',message:'Response exceeded the output contract',phase:'read',execution:'not_applicable',retryable:false}};

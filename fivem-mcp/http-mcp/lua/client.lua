@@ -186,11 +186,15 @@ AddEventHandler(localPrefix .. 'clientBind', function(raw)
     if not message or type(message.binding) ~= 'table'
         or type(message.payload) ~= 'table' or type(message.payload.logMarker) ~= 'string'
         or not message.payload.logMarker:match('^[a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9]$') then return end
-    if binding and not sameBinding(binding, message.binding) then
+    local newBinding = not sameBinding(binding, message.binding)
+    if binding and newBinding then
         highWater, active, unacked, unackedOrder, unackedBytes = '0', {}, {}, {}, 0
         acked, ackedOrder, ackedBytes, rejection = {}, {}, 0, nil
     end
     binding = message.binding
+    if newBinding then
+        print('FIVEM_MCP_BIND:' .. tostring(binding.resourceEpoch) .. ':' .. tostring(binding.connectionId) .. ':' .. tostring(binding.clientEpoch) .. ':' .. message.payload.logMarker)
+    end
     TriggerEvent(localPrefix .. 'clientLuaReady', json.encode({binding = binding}))
 end)
 

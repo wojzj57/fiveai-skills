@@ -15,7 +15,7 @@ from pathlib import Path
 from lupa.lua54 import LuaRuntime, lua_type
 
 lua=LuaRuntime(unpack_returned_tuples=True)
-network={}; local_handlers={}; sent=[]; intervals=[]; executions=[]
+network={}; local_handlers={}; sent=[]; intervals=[]; executions=[]; printed=[]
 def to_lua(value,null=None):
     if value is None:return null
     if isinstance(value,dict):return lua.table_from({k:to_lua(v,null) for k,v in value.items()})
@@ -34,6 +34,7 @@ g.RegisterNetEvent=lambda name,fn:network.__setitem__(name,fn)
 g.AddEventHandler=lambda name,fn:local_handlers.__setitem__(name,fn)
 g.TriggerServerEvent=lambda name,raw:sent.append((name,json.loads(raw)))
 g.TriggerEvent=lambda name,*args: None
+g.print=lambda line:printed.append(line)
 g.SetTimeout=lambda ms,fn:intervals.append(fn)
 g.Citizen=lua.table_from({'CreateThread':lambda fn:fn(),'Await':lambda value:value})
 g.json=lua.table_from({'decode':lambda text,pos=1,null=None:to_lua(json.loads(text),null),'encode':lambda value:json.dumps(to_python(value),ensure_ascii=False,separators=(',',':'))})
@@ -46,6 +47,9 @@ epoch='00000000-0000-4000-8000-000000000001'
 binding={'resourceEpoch':epoch,'clientId':7,'connectionId':'00000000-0000-4000-8000-000000000003','clientEpoch':'00000000-0000-4000-8000-000000000002'}
 bind={'v':1,'type':'bind','binding':binding,'payload':{'logMarker':'b'*32}}
 local_handlers['renamed-resource:mcp:v1:local:clientBind'](json.dumps(bind))
+assert printed==['FIVEM_MCP_BIND:'+epoch+':'+binding['connectionId']+':'+binding['clientEpoch']+':'+'b'*32],printed
+local_handlers['renamed-resource:mcp:v1:local:clientBind'](json.dumps(bind))
+assert len(printed)==1,printed
 frame={'v':1,'type':'execute','binding':binding,'taskId':epoch+':1','payload':{'kind':'lua','code':'executions=(executions or 0)+1; return 42,nil','args':{},'timeoutMs':1000,'planHash':'a'*64}}
 
 g.source=1

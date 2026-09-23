@@ -489,7 +489,8 @@
           "$ref": "#/$defs/ResourceName"
         },
         "state": {
-          "$ref": "#/$defs/ResourceState"
+          "$ref": "#/$defs/ResourceState",
+          "description": "Current FiveM resource state."
         },
         "epoch": {
           "oneOf": [
@@ -507,7 +508,8 @@
         "state",
         "epoch"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "description": "Discovered resource and current state."
     },
     "ResourceRead": {
       "type": "object",
@@ -518,13 +520,15 @@
             "$ref": "#/$defs/ResourceInfo"
           },
           "minItems": 0,
-          "maxItems": 8192
+          "maxItems": 8192,
+          "description": "Visible resources and their states at read time."
         }
       },
       "required": [
         "resources"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "description": "Exact resource names and current states captured on Host Tick."
     },
     "ResourceChange": {
       "type": "object",
@@ -651,10 +655,12 @@
             "failed",
             "cancelled",
             "unknown"
-          ]
+          ],
+          "description": "Current lifecycle state; queued and running are not final results."
         },
         "phase": {
-          "$ref": "#/$defs/Phase"
+          "$ref": "#/$defs/Phase",
+          "description": "Current execution phase."
         },
         "target": {
           "$ref": "#/$defs/Target"
@@ -673,7 +679,8 @@
           "maximum": 9007199254740991
         },
         "execution": {
-          "$ref": "#/$defs/Execution"
+          "$ref": "#/$defs/Execution",
+          "description": "Whether effects were not dispatched, ended or remain uncertain."
         },
         "dispatchedAt": {
           "$ref": "#/$defs/Timestamp"
@@ -884,7 +891,8 @@
             }
           }
         }
-      ]
+      ],
+      "description": "Task state and execution evidence; an initial response may be unfinished, so query queue by taskId."
     },
     "QueueOverview": {
       "type": "object",
@@ -957,7 +965,8 @@
           "enum": [
             "server",
             "client"
-          ]
+          ],
+          "description": "Log source side."
         },
         "state": {
           "enum": [
@@ -967,7 +976,8 @@
             "unconfigured",
             "unlocated",
             "ambiguous"
-          ]
+          ],
+          "description": "Collection state: available and partial permit client-only reads; other states do not."
         },
         "reason": {
           "oneOf": [
@@ -979,7 +989,8 @@
             {
               "type": "null"
             }
-          ]
+          ],
+          "description": "Human-readable collection limitation, or null when none."
         },
         "retainedLines": {
           "type": "integer",
@@ -992,7 +1003,8 @@
           "maximum": 9007199254740991
         },
         "gap": {
-          "type": "boolean"
+          "type": "boolean",
+          "description": "True when collected lines may be missing."
         },
         "from": {
           "oneOf": [
@@ -1015,7 +1027,8 @@
           ]
         },
         "clientId": {
-          "$ref": "#/$defs/ClientId"
+          "$ref": "#/$defs/ClientId",
+          "description": "Exact game client whose source is described."
         }
       },
       "required": [
@@ -1028,7 +1041,8 @@
         "from",
         "to"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "description": "Log source coverage; state and gap indicate incomplete collection."
     },
     "Dependency": {
       "type": "object",
@@ -1540,7 +1554,8 @@
       "type": "object",
       "properties": {
         "clientId": {
-          "$ref": "#/$defs/ClientId"
+          "$ref": "#/$defs/ClientId",
+          "description": "Optional exact client ID used to filter the status result."
         }
       },
       "required": [],
@@ -1553,10 +1568,12 @@
           "type": "object",
           "properties": {
             "action": {
-              "const": "status"
+              "const": "status",
+              "description": "Queue operation: inspect status, cancel an undispatched task, or recover an uncertain task."
             },
             "taskId": {
-              "$ref": "#/$defs/TaskId"
+              "$ref": "#/$defs/TaskId",
+              "description": "Exact task ID; required for cancel and recover."
             }
           },
           "required": [
@@ -1571,10 +1588,12 @@
               "enum": [
                 "cancel",
                 "recover"
-              ]
+              ],
+              "description": "Queue operation: inspect status, cancel an undispatched task, or recover an uncertain task."
             },
             "taskId": {
-              "$ref": "#/$defs/TaskId"
+              "$ref": "#/$defs/TaskId",
+              "description": "Exact task ID; required for cancel and recover."
             }
           },
           "required": [
@@ -1592,22 +1611,26 @@
           "type": "object",
           "properties": {
             "side": {
-              "const": "server"
+              "const": "server",
+              "description": "Execution side: server or a ready game client."
             },
             "code": {
               "type": "string",
               "minLength": 1,
-              "maxLength": 65536
+              "maxLength": 65536,
+              "description": "Function body to run on the chosen side."
             },
             "args": {
               "$ref": "#/$defs/JsonValue",
-              "default": {}
+              "default": {},
+              "description": "JSON arguments passed to the function or method."
             },
             "timeoutMs": {
               "type": "integer",
               "minimum": 100,
               "maximum": 60000,
-              "default": 10000
+              "default": 10000,
+              "description": "Execution timeout in milliseconds; defaults to 10000."
             }
           },
           "required": [
@@ -1620,25 +1643,30 @@
           "type": "object",
           "properties": {
             "side": {
-              "const": "client"
+              "const": "client",
+              "description": "Execution side: server or a ready game client."
             },
             "clientId": {
-              "$ref": "#/$defs/ClientId"
+              "$ref": "#/$defs/ClientId",
+              "description": "Exact ready client ID required for client execution."
             },
             "code": {
               "type": "string",
               "minLength": 1,
-              "maxLength": 65536
+              "maxLength": 65536,
+              "description": "Function body to run on the chosen side."
             },
             "args": {
               "$ref": "#/$defs/JsonValue",
-              "default": {}
+              "default": {},
+              "description": "JSON arguments passed to the function or method."
             },
             "timeoutMs": {
               "type": "integer",
               "minimum": 100,
               "maximum": 60000,
-              "default": 10000
+              "default": 10000,
+              "description": "Execution timeout in milliseconds; defaults to 10000."
             }
           },
           "required": [
@@ -1657,22 +1685,26 @@
           "type": "object",
           "properties": {
             "side": {
-              "const": "server"
+              "const": "server",
+              "description": "Execution side: server or a ready game client."
             },
             "code": {
               "type": "string",
               "minLength": 1,
-              "maxLength": 65536
+              "maxLength": 65536,
+              "description": "Function body to run on the chosen side."
             },
             "args": {
               "$ref": "#/$defs/JsonValue",
-              "default": {}
+              "default": {},
+              "description": "JSON arguments passed to the function or method."
             },
             "timeoutMs": {
               "type": "integer",
               "minimum": 100,
               "maximum": 60000,
-              "default": 10000
+              "default": 10000,
+              "description": "Execution timeout in milliseconds; defaults to 10000."
             }
           },
           "required": [
@@ -1685,25 +1717,30 @@
           "type": "object",
           "properties": {
             "side": {
-              "const": "client"
+              "const": "client",
+              "description": "Execution side: server or a ready game client."
             },
             "clientId": {
-              "$ref": "#/$defs/ClientId"
+              "$ref": "#/$defs/ClientId",
+              "description": "Exact ready client ID required for client execution."
             },
             "code": {
               "type": "string",
               "minLength": 1,
-              "maxLength": 65536
+              "maxLength": 65536,
+              "description": "Function body to run on the chosen side."
             },
             "args": {
               "$ref": "#/$defs/JsonValue",
-              "default": {}
+              "default": {},
+              "description": "JSON arguments passed to the function or method."
             },
             "timeoutMs": {
               "type": "integer",
               "minimum": 100,
               "maximum": 60000,
-              "default": 10000
+              "default": 10000,
+              "description": "Execution timeout in milliseconds; defaults to 10000."
             }
           },
           "required": [
@@ -1723,7 +1760,8 @@
           "type": "object",
           "properties": {
             "action": {
-              "const": "list"
+              "const": "list",
+              "description": "Resource operation: list needs no name; status/start/stop/restart require one exact name."
             }
           },
           "required": [
@@ -1740,10 +1778,12 @@
                 "start",
                 "stop",
                 "restart"
-              ]
+              ],
+              "description": "Resource operation: list needs no name; status/start/stop/restart require one exact name."
             },
             "name": {
-              "$ref": "#/$defs/ResourceName"
+              "$ref": "#/$defs/ResourceName",
+              "description": "Exact resource name; wildcards and batch actions are unsupported."
             }
           },
           "required": [
@@ -1761,30 +1801,36 @@
           "type": "object",
           "properties": {
             "side": {
-              "const": "server"
+              "const": "server",
+              "description": "Log source: client by default, server, or all. Client history starts after the latest Game finished loading! before binding; server includes the entire available host console history plus live output. All combines one selected client with server."
             },
             "resource": {
-              "$ref": "#/$defs/ResourceName"
+              "$ref": "#/$defs/ResourceName",
+              "description": "Exact resource name filter; combines with prefix and contains."
             },
             "prefix": {
               "type": "string",
               "minLength": 1,
-              "maxLength": 256
+              "maxLength": 256,
+              "description": "Log channel prefix filter; combines with other filters."
             },
             "contains": {
               "type": "string",
               "minLength": 1,
-              "maxLength": 4096
+              "maxLength": 4096,
+              "description": "Log message substring filter; combines with other filters."
             },
             "limit": {
               "type": "integer",
               "minimum": 1,
               "maximum": 500,
-              "default": 100
+              "default": 100,
+              "description": "Maximum returned lines, 1 to 500; defaults to 100."
             },
             "includeRaw": {
               "type": "boolean",
-              "default": false
+              "default": false,
+              "description": "Include original log text when true; defaults to false."
             }
           },
           "required": [
@@ -1796,38 +1842,44 @@
           "type": "object",
           "properties": {
             "side": {
-              "const": "client"
+              "const": "client",
+              "description": "Log source: client by default, server, or all. Client history starts after the latest Game finished loading! before binding; server includes the entire available host console history plus live output. All combines one selected client with server.",
+              "default": "client"
             },
             "resource": {
-              "$ref": "#/$defs/ResourceName"
+              "$ref": "#/$defs/ResourceName",
+              "description": "Exact resource name filter; combines with prefix and contains."
             },
             "prefix": {
               "type": "string",
               "minLength": 1,
-              "maxLength": 256
+              "maxLength": 256,
+              "description": "Log channel prefix filter; combines with other filters."
             },
             "contains": {
               "type": "string",
               "minLength": 1,
-              "maxLength": 4096
+              "maxLength": 4096,
+              "description": "Log message substring filter; combines with other filters."
             },
             "limit": {
               "type": "integer",
               "minimum": 1,
               "maximum": 500,
-              "default": 100
+              "default": 100,
+              "description": "Maximum returned lines, 1 to 500; defaults to 100."
             },
             "includeRaw": {
               "type": "boolean",
-              "default": false
+              "default": false,
+              "description": "Include original log text when true; defaults to false."
             },
             "clientId": {
-              "$ref": "#/$defs/ClientId"
+              "$ref": "#/$defs/ClientId",
+              "description": "Exact ready client ID. Omit only when exactly one ready client exists."
             }
           },
-          "required": [
-            "side"
-          ],
+          "required": [],
           "additionalProperties": false
         },
         {
@@ -1835,36 +1887,44 @@
           "properties": {
             "side": {
               "const": "all",
-              "default": "all"
+              "description": "Log source: client by default, server, or all. Client history starts after the latest Game finished loading! before binding; server includes the entire available host console history plus live output. All combines one selected client with server."
             },
             "resource": {
-              "$ref": "#/$defs/ResourceName"
+              "$ref": "#/$defs/ResourceName",
+              "description": "Exact resource name filter; combines with prefix and contains."
             },
             "prefix": {
               "type": "string",
               "minLength": 1,
-              "maxLength": 256
+              "maxLength": 256,
+              "description": "Log channel prefix filter; combines with other filters."
             },
             "contains": {
               "type": "string",
               "minLength": 1,
-              "maxLength": 4096
+              "maxLength": 4096,
+              "description": "Log message substring filter; combines with other filters."
             },
             "limit": {
               "type": "integer",
               "minimum": 1,
               "maximum": 500,
-              "default": 100
+              "default": 100,
+              "description": "Maximum returned lines, 1 to 500; defaults to 100."
             },
             "includeRaw": {
               "type": "boolean",
-              "default": false
+              "default": false,
+              "description": "Include original log text when true; defaults to false."
             },
             "clientId": {
-              "$ref": "#/$defs/ClientId"
+              "$ref": "#/$defs/ClientId",
+              "description": "Exact ready client ID. Omit only when exactly one ready client exists."
             }
           },
-          "required": [],
+          "required": [
+            "side"
+          ],
           "additionalProperties": false
         }
       ]
@@ -1876,7 +1936,8 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 256,
-          "pattern": "\\S"
+          "pattern": "\\S",
+          "description": "Reference search text."
         },
         "category": {
           "enum": [
@@ -1885,7 +1946,8 @@
             "guide",
             "all"
           ],
-          "default": "all"
+          "default": "all",
+          "description": "Optional reference category filter."
         },
         "side": {
           "enum": [
@@ -1893,13 +1955,15 @@
             "client",
             "all"
           ],
-          "default": "all"
+          "default": "all",
+          "description": "Reference side filter."
         },
         "limit": {
           "type": "integer",
           "minimum": 1,
           "maximum": 20,
-          "default": 5
+          "default": 5,
+          "description": "Maximum number of reference results."
         }
       },
       "required": [
@@ -1914,13 +1978,16 @@
           "type": "object",
           "properties": {
             "side": {
-              "const": "server"
+              "const": "server",
+              "description": "Execution side: server or a ready game client."
             },
             "scope": {
-              "const": "framework"
+              "const": "framework",
+              "description": "Framework scope; player scope requires playerId."
             },
             "method": {
-              "const": "GetPlayerFromId"
+              "const": "GetPlayerFromId",
+              "description": "Supported method in the selected framework or library."
             },
             "args": {
               "type": "array",
@@ -1931,13 +1998,15 @@
               ],
               "items": false,
               "minItems": 1,
-              "maxItems": 1
+              "maxItems": 1,
+              "description": "JSON arguments passed to the function or method."
             },
             "timeoutMs": {
               "type": "integer",
               "minimum": 100,
               "maximum": 60000,
-              "default": 10000
+              "default": 10000,
+              "description": "Execution timeout in milliseconds; defaults to 10000."
             }
           },
           "required": [
@@ -1952,29 +2021,35 @@
           "type": "object",
           "properties": {
             "side": {
-              "const": "server"
+              "const": "server",
+              "description": "Execution side: server or a ready game client."
             },
             "scope": {
-              "const": "player"
+              "const": "player",
+              "description": "Framework scope; player scope requires playerId."
             },
             "method": {
-              "const": "getMoney"
+              "const": "getMoney",
+              "description": "Supported method in the selected framework or library."
             },
             "playerId": {
-              "$ref": "#/$defs/ClientId"
+              "$ref": "#/$defs/ClientId",
+              "description": "Exact connected player ID for player methods."
             },
             "args": {
               "type": "array",
               "items": false,
               "minItems": 0,
               "maxItems": 0,
-              "default": []
+              "default": [],
+              "description": "JSON arguments passed to the function or method."
             },
             "timeoutMs": {
               "type": "integer",
               "minimum": 100,
               "maximum": 60000,
-              "default": 10000
+              "default": 10000,
+              "description": "Execution timeout in milliseconds; defaults to 10000."
             }
           },
           "required": [
@@ -1989,29 +2064,35 @@
           "type": "object",
           "properties": {
             "side": {
-              "const": "server"
+              "const": "server",
+              "description": "Execution side: server or a ready game client."
             },
             "scope": {
-              "const": "player"
+              "const": "player",
+              "description": "Framework scope; player scope requires playerId."
             },
             "method": {
-              "const": "getJob"
+              "const": "getJob",
+              "description": "Supported method in the selected framework or library."
             },
             "playerId": {
-              "$ref": "#/$defs/ClientId"
+              "$ref": "#/$defs/ClientId",
+              "description": "Exact connected player ID for player methods."
             },
             "args": {
               "type": "array",
               "items": false,
               "minItems": 0,
               "maxItems": 0,
-              "default": []
+              "default": [],
+              "description": "JSON arguments passed to the function or method."
             },
             "timeoutMs": {
               "type": "integer",
               "minimum": 100,
               "maximum": 60000,
-              "default": 10000
+              "default": 10000,
+              "description": "Execution timeout in milliseconds; defaults to 10000."
             }
           },
           "required": [
@@ -2026,16 +2107,20 @@
           "type": "object",
           "properties": {
             "side": {
-              "const": "server"
+              "const": "server",
+              "description": "Execution side: server or a ready game client."
             },
             "scope": {
-              "const": "player"
+              "const": "player",
+              "description": "Framework scope; player scope requires playerId."
             },
             "method": {
-              "const": "getAccount"
+              "const": "getAccount",
+              "description": "Supported method in the selected framework or library."
             },
             "playerId": {
-              "$ref": "#/$defs/ClientId"
+              "$ref": "#/$defs/ClientId",
+              "description": "Exact connected player ID for player methods."
             },
             "args": {
               "type": "array",
@@ -2048,13 +2133,15 @@
               ],
               "items": false,
               "minItems": 1,
-              "maxItems": 1
+              "maxItems": 1,
+              "description": "JSON arguments passed to the function or method."
             },
             "timeoutMs": {
               "type": "integer",
               "minimum": 100,
               "maximum": 60000,
-              "default": 10000
+              "default": 10000,
+              "description": "Execution timeout in milliseconds; defaults to 10000."
             }
           },
           "required": [
@@ -2070,16 +2157,20 @@
           "type": "object",
           "properties": {
             "side": {
-              "const": "server"
+              "const": "server",
+              "description": "Execution side: server or a ready game client."
             },
             "scope": {
-              "const": "player"
+              "const": "player",
+              "description": "Framework scope; player scope requires playerId."
             },
             "method": {
-              "const": "addMoney"
+              "const": "addMoney",
+              "description": "Supported method in the selected framework or library."
             },
             "playerId": {
-              "$ref": "#/$defs/ClientId"
+              "$ref": "#/$defs/ClientId",
+              "description": "Exact connected player ID for player methods."
             },
             "args": {
               "type": "array",
@@ -2097,13 +2188,15 @@
               ],
               "items": false,
               "minItems": 1,
-              "maxItems": 2
+              "maxItems": 2,
+              "description": "JSON arguments passed to the function or method."
             },
             "timeoutMs": {
               "type": "integer",
               "minimum": 100,
               "maximum": 60000,
-              "default": 10000
+              "default": 10000,
+              "description": "Execution timeout in milliseconds; defaults to 10000."
             }
           },
           "required": [
@@ -2119,16 +2212,20 @@
           "type": "object",
           "properties": {
             "side": {
-              "const": "server"
+              "const": "server",
+              "description": "Execution side: server or a ready game client."
             },
             "scope": {
-              "const": "player"
+              "const": "player",
+              "description": "Framework scope; player scope requires playerId."
             },
             "method": {
-              "const": "removeMoney"
+              "const": "removeMoney",
+              "description": "Supported method in the selected framework or library."
             },
             "playerId": {
-              "$ref": "#/$defs/ClientId"
+              "$ref": "#/$defs/ClientId",
+              "description": "Exact connected player ID for player methods."
             },
             "args": {
               "type": "array",
@@ -2146,13 +2243,15 @@
               ],
               "items": false,
               "minItems": 1,
-              "maxItems": 2
+              "maxItems": 2,
+              "description": "JSON arguments passed to the function or method."
             },
             "timeoutMs": {
               "type": "integer",
               "minimum": 100,
               "maximum": 60000,
-              "default": 10000
+              "default": 10000,
+              "description": "Execution timeout in milliseconds; defaults to 10000."
             }
           },
           "required": [
@@ -2168,16 +2267,20 @@
           "type": "object",
           "properties": {
             "side": {
-              "const": "server"
+              "const": "server",
+              "description": "Execution side: server or a ready game client."
             },
             "scope": {
-              "const": "player"
+              "const": "player",
+              "description": "Framework scope; player scope requires playerId."
             },
             "method": {
-              "const": "setJob"
+              "const": "setJob",
+              "description": "Supported method in the selected framework or library."
             },
             "playerId": {
-              "$ref": "#/$defs/ClientId"
+              "$ref": "#/$defs/ClientId",
+              "description": "Exact connected player ID for player methods."
             },
             "args": {
               "type": "array",
@@ -2198,13 +2301,15 @@
               ],
               "items": false,
               "minItems": 2,
-              "maxItems": 3
+              "maxItems": 3,
+              "description": "JSON arguments passed to the function or method."
             },
             "timeoutMs": {
               "type": "integer",
               "minimum": 100,
               "maximum": 60000,
-              "default": 10000
+              "default": 10000,
+              "description": "Execution timeout in milliseconds; defaults to 10000."
             }
           },
           "required": [
@@ -2220,29 +2325,35 @@
           "type": "object",
           "properties": {
             "side": {
-              "const": "client"
+              "const": "client",
+              "description": "Execution side: server or a ready game client."
             },
             "clientId": {
-              "$ref": "#/$defs/ClientId"
+              "$ref": "#/$defs/ClientId",
+              "description": "Exact ready client ID required for client execution."
             },
             "scope": {
-              "const": "framework"
+              "const": "framework",
+              "description": "Framework scope; player scope requires playerId."
             },
             "method": {
-              "const": "GetPlayerData"
+              "const": "GetPlayerData",
+              "description": "Supported method in the selected framework or library."
             },
             "args": {
               "type": "array",
               "items": false,
               "minItems": 0,
               "maxItems": 0,
-              "default": []
+              "default": [],
+              "description": "JSON arguments passed to the function or method."
             },
             "timeoutMs": {
               "type": "integer",
               "minimum": 100,
               "maximum": 60000,
-              "default": 10000
+              "default": 10000,
+              "description": "Execution timeout in milliseconds; defaults to 10000."
             }
           },
           "required": [
@@ -2257,16 +2368,20 @@
           "type": "object",
           "properties": {
             "side": {
-              "const": "client"
+              "const": "client",
+              "description": "Execution side: server or a ready game client."
             },
             "clientId": {
-              "$ref": "#/$defs/ClientId"
+              "$ref": "#/$defs/ClientId",
+              "description": "Exact ready client ID required for client execution."
             },
             "scope": {
-              "const": "framework"
+              "const": "framework",
+              "description": "Framework scope; player scope requires playerId."
             },
             "method": {
-              "const": "ShowNotification"
+              "const": "ShowNotification",
+              "description": "Supported method in the selected framework or library."
             },
             "args": {
               "type": "array",
@@ -2289,13 +2404,15 @@
               ],
               "items": false,
               "minItems": 1,
-              "maxItems": 3
+              "maxItems": 3,
+              "description": "JSON arguments passed to the function or method."
             },
             "timeoutMs": {
               "type": "integer",
               "minimum": 100,
               "maximum": 60000,
-              "default": 10000
+              "default": 10000,
+              "description": "Execution timeout in milliseconds; defaults to 10000."
             }
           },
           "required": [
@@ -2316,26 +2433,31 @@
           "type": "object",
           "properties": {
             "side": {
-              "const": "server"
+              "const": "server",
+              "description": "Execution side: server or a ready game client."
             },
             "scope": {
-              "const": "framework"
+              "const": "framework",
+              "description": "Framework scope; player scope requires playerId."
             },
             "method": {
-              "const": "Functions.GetPlayers"
+              "const": "Functions.GetPlayers",
+              "description": "Supported method in the selected framework or library."
             },
             "args": {
               "type": "array",
               "items": false,
               "minItems": 0,
               "maxItems": 0,
-              "default": []
+              "default": [],
+              "description": "JSON arguments passed to the function or method."
             },
             "timeoutMs": {
               "type": "integer",
               "minimum": 100,
               "maximum": 60000,
-              "default": 10000
+              "default": 10000,
+              "description": "Execution timeout in milliseconds; defaults to 10000."
             }
           },
           "required": [
@@ -2349,13 +2471,16 @@
           "type": "object",
           "properties": {
             "side": {
-              "const": "server"
+              "const": "server",
+              "description": "Execution side: server or a ready game client."
             },
             "scope": {
-              "const": "framework"
+              "const": "framework",
+              "description": "Framework scope; player scope requires playerId."
             },
             "method": {
-              "const": "Functions.GetPlayer"
+              "const": "Functions.GetPlayer",
+              "description": "Supported method in the selected framework or library."
             },
             "args": {
               "type": "array",
@@ -2366,13 +2491,15 @@
               ],
               "items": false,
               "minItems": 1,
-              "maxItems": 1
+              "maxItems": 1,
+              "description": "JSON arguments passed to the function or method."
             },
             "timeoutMs": {
               "type": "integer",
               "minimum": 100,
               "maximum": 60000,
-              "default": 10000
+              "default": 10000,
+              "description": "Execution timeout in milliseconds; defaults to 10000."
             }
           },
           "required": [
@@ -2387,16 +2514,20 @@
           "type": "object",
           "properties": {
             "side": {
-              "const": "server"
+              "const": "server",
+              "description": "Execution side: server or a ready game client."
             },
             "scope": {
-              "const": "player"
+              "const": "player",
+              "description": "Framework scope; player scope requires playerId."
             },
             "method": {
-              "const": "Functions.GetMoney"
+              "const": "Functions.GetMoney",
+              "description": "Supported method in the selected framework or library."
             },
             "playerId": {
-              "$ref": "#/$defs/ClientId"
+              "$ref": "#/$defs/ClientId",
+              "description": "Exact connected player ID for player methods."
             },
             "args": {
               "type": "array",
@@ -2409,13 +2540,15 @@
               ],
               "items": false,
               "minItems": 1,
-              "maxItems": 1
+              "maxItems": 1,
+              "description": "JSON arguments passed to the function or method."
             },
             "timeoutMs": {
               "type": "integer",
               "minimum": 100,
               "maximum": 60000,
-              "default": 10000
+              "default": 10000,
+              "description": "Execution timeout in milliseconds; defaults to 10000."
             }
           },
           "required": [
@@ -2431,16 +2564,20 @@
           "type": "object",
           "properties": {
             "side": {
-              "const": "server"
+              "const": "server",
+              "description": "Execution side: server or a ready game client."
             },
             "scope": {
-              "const": "player"
+              "const": "player",
+              "description": "Framework scope; player scope requires playerId."
             },
             "method": {
-              "const": "Functions.AddMoney"
+              "const": "Functions.AddMoney",
+              "description": "Supported method in the selected framework or library."
             },
             "playerId": {
-              "$ref": "#/$defs/ClientId"
+              "$ref": "#/$defs/ClientId",
+              "description": "Exact connected player ID for player methods."
             },
             "args": {
               "type": "array",
@@ -2463,13 +2600,15 @@
               ],
               "items": false,
               "minItems": 2,
-              "maxItems": 3
+              "maxItems": 3,
+              "description": "JSON arguments passed to the function or method."
             },
             "timeoutMs": {
               "type": "integer",
               "minimum": 100,
               "maximum": 60000,
-              "default": 10000
+              "default": 10000,
+              "description": "Execution timeout in milliseconds; defaults to 10000."
             }
           },
           "required": [
@@ -2485,16 +2624,20 @@
           "type": "object",
           "properties": {
             "side": {
-              "const": "server"
+              "const": "server",
+              "description": "Execution side: server or a ready game client."
             },
             "scope": {
-              "const": "player"
+              "const": "player",
+              "description": "Framework scope; player scope requires playerId."
             },
             "method": {
-              "const": "Functions.RemoveMoney"
+              "const": "Functions.RemoveMoney",
+              "description": "Supported method in the selected framework or library."
             },
             "playerId": {
-              "$ref": "#/$defs/ClientId"
+              "$ref": "#/$defs/ClientId",
+              "description": "Exact connected player ID for player methods."
             },
             "args": {
               "type": "array",
@@ -2517,13 +2660,15 @@
               ],
               "items": false,
               "minItems": 2,
-              "maxItems": 3
+              "maxItems": 3,
+              "description": "JSON arguments passed to the function or method."
             },
             "timeoutMs": {
               "type": "integer",
               "minimum": 100,
               "maximum": 60000,
-              "default": 10000
+              "default": 10000,
+              "description": "Execution timeout in milliseconds; defaults to 10000."
             }
           },
           "required": [
@@ -2539,16 +2684,20 @@
           "type": "object",
           "properties": {
             "side": {
-              "const": "server"
+              "const": "server",
+              "description": "Execution side: server or a ready game client."
             },
             "scope": {
-              "const": "player"
+              "const": "player",
+              "description": "Framework scope; player scope requires playerId."
             },
             "method": {
-              "const": "Functions.SetJob"
+              "const": "Functions.SetJob",
+              "description": "Supported method in the selected framework or library."
             },
             "playerId": {
-              "$ref": "#/$defs/ClientId"
+              "$ref": "#/$defs/ClientId",
+              "description": "Exact connected player ID for player methods."
             },
             "args": {
               "type": "array",
@@ -2566,13 +2715,15 @@
               ],
               "items": false,
               "minItems": 2,
-              "maxItems": 2
+              "maxItems": 2,
+              "description": "JSON arguments passed to the function or method."
             },
             "timeoutMs": {
               "type": "integer",
               "minimum": 100,
               "maximum": 60000,
-              "default": 10000
+              "default": 10000,
+              "description": "Execution timeout in milliseconds; defaults to 10000."
             }
           },
           "required": [
@@ -2588,16 +2739,20 @@
           "type": "object",
           "properties": {
             "side": {
-              "const": "server"
+              "const": "server",
+              "description": "Execution side: server or a ready game client."
             },
             "scope": {
-              "const": "player"
+              "const": "player",
+              "description": "Framework scope; player scope requires playerId."
             },
             "method": {
-              "const": "Functions.SetJobDuty"
+              "const": "Functions.SetJobDuty",
+              "description": "Supported method in the selected framework or library."
             },
             "playerId": {
-              "$ref": "#/$defs/ClientId"
+              "$ref": "#/$defs/ClientId",
+              "description": "Exact connected player ID for player methods."
             },
             "args": {
               "type": "array",
@@ -2608,13 +2763,15 @@
               ],
               "items": false,
               "minItems": 1,
-              "maxItems": 1
+              "maxItems": 1,
+              "description": "JSON arguments passed to the function or method."
             },
             "timeoutMs": {
               "type": "integer",
               "minimum": 100,
               "maximum": 60000,
-              "default": 10000
+              "default": 10000,
+              "description": "Execution timeout in milliseconds; defaults to 10000."
             }
           },
           "required": [
@@ -2630,29 +2787,35 @@
           "type": "object",
           "properties": {
             "side": {
-              "const": "client"
+              "const": "client",
+              "description": "Execution side: server or a ready game client."
             },
             "clientId": {
-              "$ref": "#/$defs/ClientId"
+              "$ref": "#/$defs/ClientId",
+              "description": "Exact ready client ID required for client execution."
             },
             "scope": {
-              "const": "framework"
+              "const": "framework",
+              "description": "Framework scope; player scope requires playerId."
             },
             "method": {
-              "const": "Functions.GetPlayerData"
+              "const": "Functions.GetPlayerData",
+              "description": "Supported method in the selected framework or library."
             },
             "args": {
               "type": "array",
               "items": false,
               "minItems": 0,
               "maxItems": 0,
-              "default": []
+              "default": [],
+              "description": "JSON arguments passed to the function or method."
             },
             "timeoutMs": {
               "type": "integer",
               "minimum": 100,
               "maximum": 60000,
-              "default": 10000
+              "default": 10000,
+              "description": "Execution timeout in milliseconds; defaults to 10000."
             }
           },
           "required": [
@@ -2667,16 +2830,20 @@
           "type": "object",
           "properties": {
             "side": {
-              "const": "client"
+              "const": "client",
+              "description": "Execution side: server or a ready game client."
             },
             "clientId": {
-              "$ref": "#/$defs/ClientId"
+              "$ref": "#/$defs/ClientId",
+              "description": "Exact ready client ID required for client execution."
             },
             "scope": {
-              "const": "framework"
+              "const": "framework",
+              "description": "Framework scope; player scope requires playerId."
             },
             "method": {
-              "const": "Functions.Notify"
+              "const": "Functions.Notify",
+              "description": "Supported method in the selected framework or library."
             },
             "args": {
               "type": "array",
@@ -2699,13 +2866,15 @@
               ],
               "items": false,
               "minItems": 1,
-              "maxItems": 3
+              "maxItems": 3,
+              "description": "JSON arguments passed to the function or method."
             },
             "timeoutMs": {
               "type": "integer",
               "minimum": 100,
               "maximum": 60000,
-              "default": 10000
+              "default": 10000,
+              "description": "Execution timeout in milliseconds; defaults to 10000."
             }
           },
           "required": [
@@ -2769,16 +2938,20 @@
           "type": "object",
           "properties": {
             "side": {
-              "const": "client"
+              "const": "client",
+              "description": "Execution side: server or a ready game client."
             },
             "clientId": {
-              "$ref": "#/$defs/ClientId"
+              "$ref": "#/$defs/ClientId",
+              "description": "Exact ready client ID required for client execution."
             },
             "library": {
-              "const": "ox_lib"
+              "const": "ox_lib",
+              "description": "Selected ox dependency: ox_lib, ox_target or oxmysql."
             },
             "method": {
-              "const": "notify"
+              "const": "notify",
+              "description": "Supported method in the selected framework or library."
             },
             "args": {
               "type": "array",
@@ -2828,13 +3001,15 @@
               ],
               "items": false,
               "minItems": 1,
-              "maxItems": 1
+              "maxItems": 1,
+              "description": "JSON arguments passed to the function or method."
             },
             "timeoutMs": {
               "type": "integer",
               "minimum": 100,
               "maximum": 60000,
-              "default": 10000
+              "default": 10000,
+              "description": "Execution timeout in milliseconds; defaults to 10000."
             }
           },
           "required": [
@@ -2850,16 +3025,20 @@
           "type": "object",
           "properties": {
             "side": {
-              "const": "client"
+              "const": "client",
+              "description": "Execution side: server or a ready game client."
             },
             "clientId": {
-              "$ref": "#/$defs/ClientId"
+              "$ref": "#/$defs/ClientId",
+              "description": "Exact ready client ID required for client execution."
             },
             "library": {
-              "const": "ox_lib"
+              "const": "ox_lib",
+              "description": "Selected ox dependency: ox_lib, ox_target or oxmysql."
             },
             "method": {
-              "const": "showTextUI"
+              "const": "showTextUI",
+              "description": "Supported method in the selected framework or library."
             },
             "args": {
               "type": "array",
@@ -2872,13 +3051,15 @@
               ],
               "items": false,
               "minItems": 1,
-              "maxItems": 1
+              "maxItems": 1,
+              "description": "JSON arguments passed to the function or method."
             },
             "timeoutMs": {
               "type": "integer",
               "minimum": 100,
               "maximum": 60000,
-              "default": 10000
+              "default": 10000,
+              "description": "Execution timeout in milliseconds; defaults to 10000."
             }
           },
           "required": [
@@ -2894,29 +3075,35 @@
           "type": "object",
           "properties": {
             "side": {
-              "const": "client"
+              "const": "client",
+              "description": "Execution side: server or a ready game client."
             },
             "clientId": {
-              "$ref": "#/$defs/ClientId"
+              "$ref": "#/$defs/ClientId",
+              "description": "Exact ready client ID required for client execution."
             },
             "library": {
-              "const": "ox_lib"
+              "const": "ox_lib",
+              "description": "Selected ox dependency: ox_lib, ox_target or oxmysql."
             },
             "method": {
-              "const": "hideTextUI"
+              "const": "hideTextUI",
+              "description": "Supported method in the selected framework or library."
             },
             "args": {
               "type": "array",
               "items": false,
               "minItems": 0,
               "maxItems": 0,
-              "default": []
+              "default": [],
+              "description": "JSON arguments passed to the function or method."
             },
             "timeoutMs": {
               "type": "integer",
               "minimum": 100,
               "maximum": 60000,
-              "default": 10000
+              "default": 10000,
+              "description": "Execution timeout in milliseconds; defaults to 10000."
             }
           },
           "required": [
@@ -2931,29 +3118,35 @@
           "type": "object",
           "properties": {
             "side": {
-              "const": "client"
+              "const": "client",
+              "description": "Execution side: server or a ready game client."
             },
             "clientId": {
-              "$ref": "#/$defs/ClientId"
+              "$ref": "#/$defs/ClientId",
+              "description": "Exact ready client ID required for client execution."
             },
             "library": {
-              "const": "ox_lib"
+              "const": "ox_lib",
+              "description": "Selected ox dependency: ox_lib, ox_target or oxmysql."
             },
             "method": {
-              "const": "isTextUIOpen"
+              "const": "isTextUIOpen",
+              "description": "Supported method in the selected framework or library."
             },
             "args": {
               "type": "array",
               "items": false,
               "minItems": 0,
               "maxItems": 0,
-              "default": []
+              "default": [],
+              "description": "JSON arguments passed to the function or method."
             },
             "timeoutMs": {
               "type": "integer",
               "minimum": 100,
               "maximum": 60000,
-              "default": 10000
+              "default": 10000,
+              "description": "Execution timeout in milliseconds; defaults to 10000."
             }
           },
           "required": [
@@ -2968,29 +3161,35 @@
           "type": "object",
           "properties": {
             "side": {
-              "const": "client"
+              "const": "client",
+              "description": "Execution side: server or a ready game client."
             },
             "clientId": {
-              "$ref": "#/$defs/ClientId"
+              "$ref": "#/$defs/ClientId",
+              "description": "Exact ready client ID required for client execution."
             },
             "library": {
-              "const": "ox_target"
+              "const": "ox_target",
+              "description": "Selected ox dependency: ox_lib, ox_target or oxmysql."
             },
             "method": {
-              "const": "isActive"
+              "const": "isActive",
+              "description": "Supported method in the selected framework or library."
             },
             "args": {
               "type": "array",
               "items": false,
               "minItems": 0,
               "maxItems": 0,
-              "default": []
+              "default": [],
+              "description": "JSON arguments passed to the function or method."
             },
             "timeoutMs": {
               "type": "integer",
               "minimum": 100,
               "maximum": 60000,
-              "default": 10000
+              "default": 10000,
+              "description": "Execution timeout in milliseconds; defaults to 10000."
             }
           },
           "required": [
@@ -3005,16 +3204,20 @@
           "type": "object",
           "properties": {
             "side": {
-              "const": "client"
+              "const": "client",
+              "description": "Execution side: server or a ready game client."
             },
             "clientId": {
-              "$ref": "#/$defs/ClientId"
+              "$ref": "#/$defs/ClientId",
+              "description": "Exact ready client ID required for client execution."
             },
             "library": {
-              "const": "ox_target"
+              "const": "ox_target",
+              "description": "Selected ox dependency: ox_lib, ox_target or oxmysql."
             },
             "method": {
-              "const": "disableTargeting"
+              "const": "disableTargeting",
+              "description": "Supported method in the selected framework or library."
             },
             "args": {
               "type": "array",
@@ -3025,13 +3228,15 @@
               ],
               "items": false,
               "minItems": 1,
-              "maxItems": 1
+              "maxItems": 1,
+              "description": "JSON arguments passed to the function or method."
             },
             "timeoutMs": {
               "type": "integer",
               "minimum": 100,
               "maximum": 60000,
-              "default": 10000
+              "default": 10000,
+              "description": "Execution timeout in milliseconds; defaults to 10000."
             }
           },
           "required": [
@@ -3047,16 +3252,20 @@
           "type": "object",
           "properties": {
             "side": {
-              "const": "client"
+              "const": "client",
+              "description": "Execution side: server or a ready game client."
             },
             "clientId": {
-              "$ref": "#/$defs/ClientId"
+              "$ref": "#/$defs/ClientId",
+              "description": "Exact ready client ID required for client execution."
             },
             "library": {
-              "const": "ox_target"
+              "const": "ox_target",
+              "description": "Selected ox dependency: ox_lib, ox_target or oxmysql."
             },
             "method": {
-              "const": "zoneExists"
+              "const": "zoneExists",
+              "description": "Supported method in the selected framework or library."
             },
             "args": {
               "type": "array",
@@ -3078,13 +3287,15 @@
               ],
               "items": false,
               "minItems": 1,
-              "maxItems": 1
+              "maxItems": 1,
+              "description": "JSON arguments passed to the function or method."
             },
             "timeoutMs": {
               "type": "integer",
               "minimum": 100,
               "maximum": 60000,
-              "default": 10000
+              "default": 10000,
+              "description": "Execution timeout in milliseconds; defaults to 10000."
             }
           },
           "required": [
@@ -3100,16 +3311,20 @@
           "type": "object",
           "properties": {
             "side": {
-              "const": "client"
+              "const": "client",
+              "description": "Execution side: server or a ready game client."
             },
             "clientId": {
-              "$ref": "#/$defs/ClientId"
+              "$ref": "#/$defs/ClientId",
+              "description": "Exact ready client ID required for client execution."
             },
             "library": {
-              "const": "ox_target"
+              "const": "ox_target",
+              "description": "Selected ox dependency: ox_lib, ox_target or oxmysql."
             },
             "method": {
-              "const": "removeZone"
+              "const": "removeZone",
+              "description": "Supported method in the selected framework or library."
             },
             "args": {
               "type": "array",
@@ -3134,13 +3349,15 @@
               ],
               "items": false,
               "minItems": 1,
-              "maxItems": 2
+              "maxItems": 2,
+              "description": "JSON arguments passed to the function or method."
             },
             "timeoutMs": {
               "type": "integer",
               "minimum": 100,
               "maximum": 60000,
-              "default": 10000
+              "default": 10000,
+              "description": "Execution timeout in milliseconds; defaults to 10000."
             }
           },
           "required": [
@@ -3156,13 +3373,16 @@
           "type": "object",
           "properties": {
             "side": {
-              "const": "server"
+              "const": "server",
+              "description": "Execution side: server or a ready game client."
             },
             "library": {
-              "const": "oxmysql"
+              "const": "oxmysql",
+              "description": "Selected ox dependency: ox_lib, ox_target or oxmysql."
             },
             "method": {
-              "const": "query"
+              "const": "query",
+              "description": "Supported method in the selected framework or library."
             },
             "args": {
               "type": "array",
@@ -3178,13 +3398,15 @@
               ],
               "items": false,
               "minItems": 1,
-              "maxItems": 2
+              "maxItems": 2,
+              "description": "JSON arguments passed to the function or method."
             },
             "timeoutMs": {
               "type": "integer",
               "minimum": 100,
               "maximum": 60000,
-              "default": 10000
+              "default": 10000,
+              "description": "Execution timeout in milliseconds; defaults to 10000."
             }
           },
           "required": [
@@ -3199,13 +3421,16 @@
           "type": "object",
           "properties": {
             "side": {
-              "const": "server"
+              "const": "server",
+              "description": "Execution side: server or a ready game client."
             },
             "library": {
-              "const": "oxmysql"
+              "const": "oxmysql",
+              "description": "Selected ox dependency: ox_lib, ox_target or oxmysql."
             },
             "method": {
-              "const": "single"
+              "const": "single",
+              "description": "Supported method in the selected framework or library."
             },
             "args": {
               "type": "array",
@@ -3221,13 +3446,15 @@
               ],
               "items": false,
               "minItems": 1,
-              "maxItems": 2
+              "maxItems": 2,
+              "description": "JSON arguments passed to the function or method."
             },
             "timeoutMs": {
               "type": "integer",
               "minimum": 100,
               "maximum": 60000,
-              "default": 10000
+              "default": 10000,
+              "description": "Execution timeout in milliseconds; defaults to 10000."
             }
           },
           "required": [
@@ -3242,13 +3469,16 @@
           "type": "object",
           "properties": {
             "side": {
-              "const": "server"
+              "const": "server",
+              "description": "Execution side: server or a ready game client."
             },
             "library": {
-              "const": "oxmysql"
+              "const": "oxmysql",
+              "description": "Selected ox dependency: ox_lib, ox_target or oxmysql."
             },
             "method": {
-              "const": "scalar"
+              "const": "scalar",
+              "description": "Supported method in the selected framework or library."
             },
             "args": {
               "type": "array",
@@ -3264,13 +3494,15 @@
               ],
               "items": false,
               "minItems": 1,
-              "maxItems": 2
+              "maxItems": 2,
+              "description": "JSON arguments passed to the function or method."
             },
             "timeoutMs": {
               "type": "integer",
               "minimum": 100,
               "maximum": 60000,
-              "default": 10000
+              "default": 10000,
+              "description": "Execution timeout in milliseconds; defaults to 10000."
             }
           },
           "required": [
@@ -3285,13 +3517,16 @@
           "type": "object",
           "properties": {
             "side": {
-              "const": "server"
+              "const": "server",
+              "description": "Execution side: server or a ready game client."
             },
             "library": {
-              "const": "oxmysql"
+              "const": "oxmysql",
+              "description": "Selected ox dependency: ox_lib, ox_target or oxmysql."
             },
             "method": {
-              "const": "insert"
+              "const": "insert",
+              "description": "Supported method in the selected framework or library."
             },
             "args": {
               "type": "array",
@@ -3307,13 +3542,15 @@
               ],
               "items": false,
               "minItems": 1,
-              "maxItems": 2
+              "maxItems": 2,
+              "description": "JSON arguments passed to the function or method."
             },
             "timeoutMs": {
               "type": "integer",
               "minimum": 100,
               "maximum": 60000,
-              "default": 10000
+              "default": 10000,
+              "description": "Execution timeout in milliseconds; defaults to 10000."
             }
           },
           "required": [
@@ -3328,13 +3565,16 @@
           "type": "object",
           "properties": {
             "side": {
-              "const": "server"
+              "const": "server",
+              "description": "Execution side: server or a ready game client."
             },
             "library": {
-              "const": "oxmysql"
+              "const": "oxmysql",
+              "description": "Selected ox dependency: ox_lib, ox_target or oxmysql."
             },
             "method": {
-              "const": "update"
+              "const": "update",
+              "description": "Supported method in the selected framework or library."
             },
             "args": {
               "type": "array",
@@ -3350,13 +3590,15 @@
               ],
               "items": false,
               "minItems": 1,
-              "maxItems": 2
+              "maxItems": 2,
+              "description": "JSON arguments passed to the function or method."
             },
             "timeoutMs": {
               "type": "integer",
               "minimum": 100,
               "maximum": 60000,
-              "default": 10000
+              "default": 10000,
+              "description": "Execution timeout in milliseconds; defaults to 10000."
             }
           },
           "required": [
@@ -3371,13 +3613,16 @@
           "type": "object",
           "properties": {
             "side": {
-              "const": "server"
+              "const": "server",
+              "description": "Execution side: server or a ready game client."
             },
             "library": {
-              "const": "oxmysql"
+              "const": "oxmysql",
+              "description": "Selected ox dependency: ox_lib, ox_target or oxmysql."
             },
             "method": {
-              "const": "transaction"
+              "const": "transaction",
+              "description": "Supported method in the selected framework or library."
             },
             "args": {
               "type": "array",
@@ -3393,13 +3638,15 @@
               ],
               "items": false,
               "minItems": 1,
-              "maxItems": 1
+              "maxItems": 1,
+              "description": "JSON arguments passed to the function or method."
             },
             "timeoutMs": {
               "type": "integer",
               "minimum": 100,
               "maximum": 60000,
-              "default": 10000
+              "default": 10000,
+              "description": "Execution timeout in milliseconds; defaults to 10000."
             }
           },
           "required": [
@@ -3450,7 +3697,8 @@
           ],
           "additionalProperties": false
         }
-      ]
+      ],
+      "description": "Immediate server status snapshot with client bindings, dependencies, log coverage and queue state; failures carry an error."
     },
     "queueOutput": {
       "type": "object",
@@ -3490,7 +3738,8 @@
           ],
           "additionalProperties": false
         }
-      ]
+      ],
+      "description": "Queue overview, one task, or recovery result according to action; failures carry an error."
     },
     "execute_luaOutput": {
       "type": "object",
@@ -3530,7 +3779,8 @@
           ],
           "additionalProperties": false
         }
-      ]
+      ],
+      "description": "Submitted Lua task with execution state and possible result or error; queued and running tasks need a later queue query."
     },
     "execute_jsOutput": {
       "type": "object",
@@ -3570,7 +3820,8 @@
           ],
           "additionalProperties": false
         }
-      ]
+      ],
+      "description": "Submitted JavaScript task with execution state and possible result or error; queued and running tasks need a later queue query."
     },
     "resourceOutput": {
       "type": "object",
@@ -3617,7 +3868,8 @@
           ],
           "additionalProperties": false
         }
-      ]
+      ],
+      "description": "Resource list or status read, or a submitted change task; unfinished changes need a later queue query."
     },
     "logsOutput": {
       "type": "object",
@@ -3657,7 +3909,8 @@
           ],
           "additionalProperties": false
         }
-      ]
+      ],
+      "description": "Matching log lines, separate source coverage and truncation state; failures carry an error."
     },
     "esxOutput": {
       "type": "object",
@@ -3697,7 +3950,8 @@
           ],
           "additionalProperties": false
         }
-      ]
+      ],
+      "description": "Submitted ESX task with execution state and possible result or error; queued and running tasks need a later queue query."
     },
     "qbcoreOutput": {
       "type": "object",
@@ -3737,7 +3991,8 @@
           ],
           "additionalProperties": false
         }
-      ]
+      ],
+      "description": "Submitted QBCore task with execution state and possible result or error; queued and running tasks need a later queue query."
     },
     "oxOutput": {
       "type": "object",
@@ -3777,7 +4032,8 @@
           ],
           "additionalProperties": false
         }
-      ]
+      ],
+      "description": "Submitted ox task with execution state and possible result or error; queued and running tasks need a later queue query."
     },
     "referenceOutput": {
       "type": "object",
@@ -3817,7 +4073,8 @@
           ],
           "additionalProperties": false
         }
-      ]
+      ],
+      "description": "Immediate reference search results with provenance; failures carry an error."
     },
     "TaskSummary": {
       "type": "object",
@@ -3871,7 +4128,8 @@
         "target",
         "createdAt"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "description": "Compact queue task state."
     },
     "ClientBinding": {
       "type": "object",

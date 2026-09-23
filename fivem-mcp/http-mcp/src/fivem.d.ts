@@ -52,3 +52,4 @@ declare function onNet(event:string,handler:(...args:unknown[])=>void):void;
 declare function emitNet(event:string,clientId:number,...args:unknown[]):void;
 
 declare function GetPlayerName(id:string):string|null;
+declare function GetConsoleBuffer():string;

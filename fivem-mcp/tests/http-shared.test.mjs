@@ -34,3 +34,23 @@ test('schema publishes self-contained 2020 schemas and validates tuple arguments
   assert.equal(validate('execute_jsInput',{side:'server',code:'return 1;',approved:true}),false);
   assert.ok(schema('execute_jsOutput').$defs.Task);
 });
+
+test('HTTP tool contracts describe every field and default logs to one client',async()=>{
+  const {validate,schema}=await import('../http-mcp/src/shared/schema.ts');
+  const names=['status','queue','execute_lua','execute_js','resource','logs','esx','qbcore','ox','reference'];
+  const resultMeaning={status:/Immediate server status snapshot/,queue:/Queue overview, one task, or recovery result/,execute_lua:/Submitted Lua task/,execute_js:/Submitted JavaScript task/,resource:/Resource list or status read, or a submitted change task/,logs:/Matching log lines, separate source coverage/,esx:/Submitted ESX task/,qbcore:/Submitted QBCore task/,ox:/Submitted ox task/,reference:/Immediate reference search results/};
+  for(const name of names){
+    const input=schema(name+'Input'),output=schema(name+'Output');
+    assert.match(output.description,resultMeaning[name],`${name} output meaning`);
+    for(const branch of input.oneOf??[input])for(const [key,property] of Object.entries(branch.properties??{}))assert.ok(property.description,`${name}.${key} needs a description`);
+  }
+  assert.equal(validate('logsInput',{}),true);
+  assert.equal(validate('logsInput',{side:'client',clientId:7}),true);
+  assert.equal(validate('logsInput',{side:'all'}),true);
+  assert.equal(validate('logsInput',{side:'server',clientId:7}),false);
+  assert.equal(validate('logsInput',{limit:501}),false);
+  assert.equal(validate('resourceInput',{action:'list',name:'example'}),false);
+  assert.equal(validate('resourceInput',{action:'status',name:'example'}),true);
+  assert.equal(validate('resourceInput',{action:'start'}),false);
+  assert.equal(schema('logsInput').oneOf[1].properties.side.default,'client');
+});

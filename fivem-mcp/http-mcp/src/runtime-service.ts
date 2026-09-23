@@ -20,6 +20,19 @@ interface RuntimeOptions {resourceName:string;resourceEpoch:string;buildId:strin
 interface Plan {code?:string;args?:unknown;timeoutMs?:number;javascript?:string;[key:string]:unknown}
 type Handler=(args:Record<string,unknown>,sessionId:string,context?:ConfirmationContext)=>Promise<ReturnType<typeof output>>;
 const versions:Record<string,string>={es_extended:'1.15.2','qb-core':'1.3.0',ox_lib:'3.39.0',ox_target:'1.18.1',oxmysql:'2.14.1'};
+const toolDescriptions:Record<string,string>={
+  status:'Inspect server identity, ready client bindings, dependencies, log coverage and queue state.',
+  queue:'Inspect a task or queue, cancel work before dispatch, or recover uncertain execution from retained evidence.',
+  execute_lua:'Run a Lua function body on the server or a specified ready game client.',
+  execute_js:'Run an ES2022 JavaScript async function body with args. After await, access server natives/exports inside a synchronous mcp.host(callback). No TypeScript or module imports.',
+  resource:'List or inspect exact-name resources, or start, stop or restart one through the FIFO. Self stop and restart are refused.',
+  logs:'Read bounded log results with explicit coverage. Client history starts after the latest Game finished loading! line, including startup before MCP binding. Server history includes the entire available host console buffer plus live output. Defaults to client logs.',
+  esx:'Call supported ESX Legacy methods on the server or a ready game client.',
+  qbcore:'Call supported QBCore methods on the server or a ready game client.',
+  ox:'Call supported ox_lib, ox_target or oxmysql methods selected by library.',
+  reference:'Search bundled FiveM reference summaries, with optional configured online fallback.',
+};
+type DependencySnapshot={resource:string;installed:boolean;state:string;version:string|null;expectedVersion:string};
 function error(code:TaskErrorCode,message:string=code,execution:TaskExecution='not_dispatched',phase:TaskPhase='validation'):TaskError{return {code,message:message.slice(0,4096),phase,retryable:false,execution};}
 function output(value:Record<string,unknown>){return {isError:value.ok===false,structuredContent:value,content:[{type:'text' as const,text:JSON.stringify(value)}]};}
 export class RuntimeService {
@@ -134,6 +147,12 @@ export class RuntimeService {
     on('playerDropped',()=>{const id=Number((globalThis as unknown as {source:unknown}).source);this.players.delete(id);this.clients.drop(id);});
     const changed=(name:unknown)=>{if(typeof name==='string'){this.resources.observe(name);if(!this.stopped)void this.options.host.run(()=>this.refreshDependencies()).catch(()=>{});const active=this.tasks.overview().active;if(active?.target.resource===name&&active.tool!=='resource'&&active.execution==='unknown')this.tasks.settle(active.taskId,{identity:active.target.binding,execution:'unknown',error:error('EXECUTION_UNKNOWN','Dependency changed during execution','unknown','dispatched')});}};
     on('onResourceStart',changed);on('onResourceStop',changed);this.refreshDependencies();
+    // registerHost runs synchronously on Host Tick: snapshot first, then attach
+    // the listener without an await, so the same history is not replayed twice.
+    try{
+      if(typeof GetConsoleBuffer!=='function')throw new Error('GetConsoleBuffer is unavailable');
+      for(const line of GetConsoleBuffer().split(/\r?\n/))if(line)this.logs.append('server',line);
+    }catch{this.logs.serverHistoryReason='Server console history unavailable; collecting live output only';}
     if(typeof RegisterConsoleListener==='function'){
       this.logs.available=true;
       RegisterConsoleListener((channel,message)=>{if(!this.stopped)this.logs.append(channel,message);});
@@ -150,12 +169,52 @@ export class RuntimeService {
       }catch{ /* Malformed local terminals cannot settle a task. */ }
     });
   }
-  hasTool(name:string){return Object.hasOwn(this.registry,name);}
-  tools(){return Object.entries(this.registry).map(([name,{inputSchema,outputSchema}])=>({name,description:name==='execute_js'?'Run an ES2022 JavaScript async function body with args. After await, access server natives/exports inside a synchronous mcp.host(callback). No TypeScript or module imports.':`FiveM ${name}`,inputSchema,outputSchema}));}
+  private async discovery(){
+    const dependencies=await this.options.host.run(()=>{
+      const installed=new Set(Array.from({length:GetNumResources()},(_,i)=>GetResourceByFindIndex(i)));
+      return Object.entries(versions).map(([resource,expectedVersion]):DependencySnapshot=>({resource,installed:installed.has(resource),state:installed.has(resource)?GetResourceState(resource):'missing',version:installed.has(resource)?GetResourceMetadata(resource,'version',0)||null:null,expectedVersion}));
+    });
+    return {dependencies,clients:this.clients.snapshots(),serverLogs:this.logs.coverage()};
+  }
+  private registered(name:string,installed:ReadonlySet<string>){
+    if(!Object.hasOwn(this.registry,name))return false;
+    const required=name==='esx'?['es_extended']:name==='qbcore'?['qb-core']:name==='ox'?['ox_lib','ox_target','oxmysql']:[];
+    return required.length===0||required.some(resource=>installed.has(resource));
+  }
+  async hasTool(name:string){
+    if(!Object.hasOwn(this.registry,name))return false;
+    if(!['esx','qbcore','ox'].includes(name))return true;
+    const installed=await this.options.host.run(()=>new Set(Array.from({length:GetNumResources()},(_,i)=>GetResourceByFindIndex(i))));
+    return this.registered(name,installed);
+  }
+  async tools(){
+    const snapshot=await this.discovery();
+    const installed=new Set(snapshot.dependencies.filter(d=>d.installed).map(d=>d.resource));
+    const dependency=(resource:string)=>snapshot.dependencies.find(d=>d.resource===resource)!;
+    const state=(d:DependencySnapshot)=>d.state!=='started'?`unavailable: ${d.resource} is ${d.state}`:d.version!==d.expectedVersion?`unavailable: ${d.resource} version ${d.version??'unknown'}; requires ${d.expectedVersion}`:'available';
+    const ready=snapshot.clients.filter(c=>c.ready);
+    const clientNote=ready.length?'':'Client execution unavailable: no ready client binding.';
+    const coverage=ready.map(c=>this.clientLogs.coverage(c.clientId));
+    const logNote=[!ready.length?'Client logs unavailable: no ready client binding.':'',ready.length>1?'Specify clientId to select one of multiple ready clients.':'',ready.length&&!this.options.config.clientLogDirectories.length&&coverage.every(c=>c.state==='unconfigured')?'Client logs unavailable: no client log directory or local bridge configured.':'',...coverage.filter(c=>c.state!=='available').map(c=>`Client ${c.clientId} log source ${c.state}.`),snapshot.serverLogs.state!=='available'?'Server log coverage unavailable.':''].filter(Boolean).join(' ');
+    return Object.entries(this.registry).filter(([name])=>this.registered(name,installed)).map(([name,{inputSchema,outputSchema}])=>{
+      let note='';
+      if(name==='esx')note=`Dependency es_extended: ${state(dependency('es_extended'))}.`;
+      if(name==='qbcore')note=`Dependency qb-core: ${state(dependency('qb-core'))}.`;
+      if(name==='ox')note=['ox_lib','ox_target','oxmysql'].filter(resource=>dependency(resource).installed).map(resource=>`${resource}: ${state(dependency(resource))}.`).join(' ');
+      if(name==='execute_lua'||name==='execute_js')note=clientNote;
+      if(name==='logs')note=logNote;
+      return {name,description:[toolDescriptions[name],note].filter(Boolean).join(' '),inputSchema,outputSchema};
+    });
+  }
   call(name:string,args:Record<string,unknown>,sessionId:string,context?:ConfirmationContext){return this.registry[name]!.handler(args,sessionId,context);}
   private refreshDependencies(){this.dependencies=Object.entries(versions).map(([resource,expectedVersion])=>{const state=GetResourceState(resource),version=GetResourceMetadata(resource,'version',0)||null;return {resource,version,expectedVersion,epoch:state==='started'?String(this.resources.epoch(resource)):null,state:state==='missing'?'missing':state!=='started'?'stopped':version!==expectedVersion?'version_mismatch':'detected',methods:dependencyMethods(resource,state==='started'&&version===expectedVersion,this.clients.snapshots().some(client=>client.ready))};});}
   status(){return {service:'fivem-mcp',resourceName:this.options.resourceName,resourceEpoch:this.options.resourceEpoch,buildId:this.options.buildId,runtime:{node:process.version,platform:process.platform,artifact:null},listener:{host:'127.0.0.1',port:this.options.config.port,path:'/mcp'},javascript:{mode:'native' as const,syntax:'ES2022' as const,hostAccess:'explicit' as const},clients:this.clients.snapshots(),dependencies:this.dependencies,logs:[this.logs.coverage(),...this.clients.snapshots().map(c=>this.clientLogs.coverage(c.clientId))],queue:this.tasks.overview()};}
+  ingestClientLogs(marker:string,fileId:string,startOffset:number,endOffset:number,lines:string[]){
+    const ready=new Set(this.clients.snapshots().filter(client=>client.ready).map(client=>client.clientId));
+    return this.clientLogs.ingest(marker,fileId,startOffset,endOffset,lines,ready);
+  }
   private async handleCall(name:string,args:Record<string,unknown>,sessionId:string,context?:ConfirmationContext){
+    if(['esx','qbcore','ox'].includes(name)&&!(await this.hasTool(name)))throw new McpError(ErrorCode.InvalidParams,`unknown tool: ${name}`);
     if(name==='reference'){try{return output({ok:true,data:await this.reference.search(args as unknown as {query:string})});}catch{return output({ok:false,error:error('REFERENCE_UNAVAILABLE','Reference sources unavailable','not_applicable','read')});}}
     if(name==='status'){try{await this.options.host.run(()=>this.refreshDependencies());}catch{return output({ok:false,error:error('HOST_UNAVAILABLE','Dependency status could not be refreshed','not_applicable','read')});}const data=this.status();if(args.clientId!==undefined)data.clients=data.clients.filter(c=>c.clientId===args.clientId);return output({ok:true,data});}
     if(name==='queue'){
@@ -168,12 +227,12 @@ export class RuntimeService {
       return result.ok?output({ok:true,data:{kind:args.action==='recover'?'recovery':'task',task:result.task,...(args.action==='recover'?{paused:this.tasks.overview().paused}:{})}}):output(result as unknown as Record<string,unknown>);
     }
     if(name==='logs'){
-      const side=String(args.side??'all');
-      const clients=this.clients.snapshots();let clientId=args.clientId as number|undefined;
+      const side=String(args.side??'client');
+      const clients=this.clients.snapshots().filter(c=>c.ready);let clientId=args.clientId as number|undefined;
       if(side!=='server'){
         if(clientId===undefined&&clients.length>1)throw new McpError(ErrorCode.InvalidParams,'clientId is required when multiple clients are connected');
         if(clientId===undefined&&clients.length===1)clientId=clients[0]!.clientId;
-        if(clientId!==undefined&&!clients.some(c=>c.clientId===clientId)||side==='client'&&clientId===undefined)return output({ok:false,error:error('TARGET_UNAVAILABLE','Client is not connected','not_applicable','read')});
+        if(clientId!==undefined&&!clients.some(c=>c.clientId===clientId)||clientId===undefined)return output({ok:false,error:error('TARGET_UNAVAILABLE','Client is not connected','not_applicable','read')});
       }
       const coverage=[...(side!=='client'?[this.logs.coverage()]:[]),...(side!=='server'&&clientId!==undefined?[this.clientLogs.coverage(clientId)]:[])];
       if(side==='client'&&!coverage.some(c=>['available','partial'].includes(c.state)))return output({ok:false,error:error('LOG_SOURCE_UNAVAILABLE','Client log source unavailable','not_applicable','read')});

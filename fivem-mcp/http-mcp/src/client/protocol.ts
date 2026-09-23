@@ -222,10 +222,13 @@ export class ClientProtocol {
     if (!isBinding(message.binding) || message.binding.clientEpoch !== this.options.clientEpoch) return false;
     const payload = message.payload;
     if (!isRecord(payload) || !hasOnlyKeys(payload, ["logMarker"]) || typeof payload.logMarker !== "string" || !/^[a-f0-9]{32}$/.test(payload.logMarker)) return false;
-    if (this.binding && !sameBinding(this.binding, message.binding)) this.resetExecutionState();
+    const repeated = this.binding !== null && sameBinding(this.binding, message.binding);
+    if (this.binding && !repeated) this.resetExecutionState();
     this.binding = { ...message.binding };
-    this.lua = false;
-    this.lastHeartbeatAt = this.clock();
+    if (!repeated) {
+      this.lua = false;
+      this.lastHeartbeatAt = this.clock();
+    }
     this.options.sendLocal(this.localEvent("clientBind"), raw);
     return true;
   }

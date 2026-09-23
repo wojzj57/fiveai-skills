@@ -156,6 +156,21 @@ test("a bound client keeps announcing the same epoch so a restarted server can b
   assert.equal(network[0].message.payload.clientEpoch, CLIENT_EPOCH);
 });
 
+test("repeated bind acknowledgements do not postpone heartbeat or clear Lua readiness", () => {
+  const { protocol, clock, network } = makeProtocol();
+  protocol.start();
+  assert.equal(protocol.receive(65535, "bind", bindFrame()), true);
+  assert.equal(protocol.luaReady(JSON.stringify({ binding: binding() })), true);
+  for (let elapsed = 2_000; elapsed <= 6_000; elapsed += 2_000) {
+    clock.advance(2_000);
+    protocol.tick();
+    assert.equal(protocol.receive(65535, "bind", bindFrame()), true);
+  }
+  const heartbeats = network.filter(({ message }) => message.type === "heartbeat");
+  assert.equal(heartbeats.length, 1);
+  assert.deepEqual(heartbeats[0].message.payload, { lua: true, js: true });
+});
+
 test("JS execution saves before reporting, deduplicates, resends, acknowledges, and probes without replay", async () => {
   let executions = 0;
   const { protocol, clock, network } = makeProtocol(async (_code, args) => {

@@ -10,6 +10,7 @@
   "scripts": {
     "build": "pnpm run typecheck:http && pnpm run build:http",
     "build:http": "node scripts/build-http-mcp.mjs",
+    "logs:bridge": "node scripts/client-log-bridge.mjs",
     "build:identity": "node scripts/build-identity.mjs",
     "build:contracts": "pnpm run build:identity && esbuild src/index.ts --bundle --format=esm --platform=node --outfile=dist/index.mjs",
     "build:entry": "pnpm run build:identity && esbuild src/cli/entry.ts --bundle --format=esm --platform=node --outfile=dist/entry.mjs --banner:js=\"import { createRequire as __cr } from 'module'; const require = __cr(import.meta.url);\" && node -e \"require('node:fs').copyFileSync('src/cli/windows-files.ps1', 'dist/windows-files.ps1')\"",

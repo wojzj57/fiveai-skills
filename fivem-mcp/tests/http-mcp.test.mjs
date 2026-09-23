@@ -241,7 +241,7 @@ test("MCP initialize negotiates a session and lists formal tools with no probes"
   const parsed = JSON.parse(listed.text);
   assert.deepEqual(
     parsed.result.tools.map((tool) => tool.name).sort(),
-    ["esx", "execute_js", "execute_lua", "logs", "ox", "qbcore", "queue", "reference", "resource", "status"],
+    ["execute_js", "execute_lua", "logs", "queue", "reference", "resource", "status"],
   );
 
   const opened = host.evidence().filter((entry) => entry.tag === "session-open");
@@ -258,6 +258,48 @@ test("MCP initialize negotiates a session and lists formal tools with no probes"
 
   const afterClose = await rpc("tools/list", {}, { id: 3, session });
   assert.equal(afterClose.status, 404, "a deleted session must not be reused");
+});
+
+test('tool discovery follows installed resources and reports partial availability',async()=>{
+  const session=await openSession('discovery');
+  try{
+    const initial=JSON.parse((await rpc('tools/list',{}, {id:701,session})).text).result.tools;
+    assert.equal(initial.length,7);
+    assert.match(initial.find(t=>t.name==='execute_js').description,/Client execution unavailable/);
+    assert.match(initial.find(t=>t.name==='logs').description,/Client logs unavailable/);
+    assert.equal(rpcErrorCode(await callTool('esx',session,{})),-32602);
+    const noClient=JSON.parse((await callTool('logs',session,{})).text).result.structuredContent;
+    assert.equal(noClient.error.code,'TARGET_UNAVAILABLE');
+    const server=JSON.parse((await callTool('logs',session,{side:'server'})).text).result.structuredContent;
+    assert.equal(server.ok,true);
+    host.setDependency('es_extended','1.15.2',{});
+    host.setDependency('ox_lib','3.39.0',{});
+    host.setDependency('ox_target','0.0.0',{});
+    host.setResourceState('ox_lib','stopped');
+    const listed=JSON.parse((await rpc('tools/list',{}, {id:702,session})).text).result.tools;
+    assert.deepEqual(listed.map(t=>t.name).sort(),['esx','execute_js','execute_lua','logs','ox','queue','reference','resource','status']);
+    assert.match(listed.find(t=>t.name==='ox').description,/ox_lib: unavailable.*stopped/);
+    assert.match(listed.find(t=>t.name==='ox').description,/ox_target: unavailable.*requires 1.18.1/);
+    assert.doesNotMatch(listed.find(t=>t.name==='ox').description,/oxmysql:/);
+    assert.match(listed.find(t=>t.name==='esx').description,/available/);
+    host.setResourceState('es_extended','stopped');
+    const stopped=JSON.parse((await rpc('tools/list',{}, {id:703,session})).text).result.tools;
+    assert.match(stopped.find(t=>t.name==='esx').description,/unavailable.*stopped/);
+    const stoppedCall=JSON.parse((await callTool('esx',session,{side:'server',scope:'framework',method:'GetPlayerFromId',args:[7]})).text).result.structuredContent;
+    assert.equal(stoppedCall.error.code,'DEPENDENCY_MISSING');
+    const missingLibrary=JSON.parse((await callTool('ox',session,{side:'server',library:'oxmysql',method:'query',args:['SELECT 1']})).text).result.structuredContent;
+    assert.equal(missingLibrary.error.code,'DEPENDENCY_MISSING');
+    host.setResourceState('es_extended',null);
+    assert.equal(rpcErrorCode(await callTool('esx',session,{})),-32602);
+    const removed=JSON.parse((await rpc('tools/list',{}, {id:704,session})).text).result.tools;
+    assert.equal(removed.some(t=>t.name==='esx'),false);
+    assert.deepEqual(host.violations,[]);
+  }finally{
+    host.setResourceState('es_extended',null);
+    host.setResourceState('ox_lib',null);
+    host.setResourceState('ox_target',null);
+    await request({method:'DELETE',headers:{[SESSION_HEADER]:session}});
+  }
 });
 
 test("tools are refused until the session sends notifications/initialized", async () => {
@@ -540,6 +582,13 @@ test('native JS executes through the FIFO and task query preserves encoded value
  await request({method:'DELETE',headers:{[SESSION_HEADER]:session}});
 });
 
+test('server logs include the host console history from before MCP startup',async()=>{
+ const session=await openSession();
+ const result=JSON.parse((await callTool('logs',session,{side:'server',contains:'server history before MCP'})).text).result.structuredContent;
+ assert.equal(result.data.lines.length,1);
+ assert.equal(result.data.lines[0].message,'server history before MCP');
+});
+
 test('resource changes share FIFO and server logs preserve resource attribution',async()=>{
  const session=await openSession();
  const list=await callTool('resource',session,{action:'list'});assert.equal(JSON.parse(list.text).result.structuredContent.data.resources.length,3);
@@ -560,10 +609,10 @@ test('server Lua local terminal uses its server identity rather than the client 
 
 test('HTTP client execution binds the genuine network source and settles matching terminal evidence',async()=>{
   const session=await openSession('client-integration');
-  const epoch='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';let binding;
+  const epoch='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';let binding,marker;
   host.onNetwork((event,id,raw)=>{
     const message=JSON.parse(raw);assert.equal(id,7);
-    if(event.endsWith(':bind')){binding=message.binding;host.networkFrom(7,'fivem-mcp:mcp:v1:heartbeat',JSON.stringify({v:1,type:'heartbeat',binding,payload:{lua:true,js:true}}));}
+    if(event.endsWith(':bind')){binding=message.binding;marker=`FIVEM_MCP_BIND:${binding.resourceEpoch}:${binding.connectionId}:${binding.clientEpoch}:${message.payload.logMarker}`;host.networkFrom(7,'fivem-mcp:mcp:v1:heartbeat',JSON.stringify({v:1,type:'heartbeat',binding,payload:{lua:true,js:true}}));}
     if(event.endsWith(':execute')){host.networkFrom(7,'fivem-mcp:mcp:v1:terminal',JSON.stringify({v:1,type:'terminal',binding,taskId:message.taskId,payload:{execution:'ended',result:{kind:'values',values:[42]}}}));}
   });
   host.networkFrom(7,'fivem-mcp:mcp:v1:hello',JSON.stringify({v:1,type:'hello',payload:{clientEpoch:epoch,lua:true,js:true}}));
@@ -572,9 +621,28 @@ test('HTTP client execution binds the genuine network source and settles matchin
   assert.equal(result.ok,true,JSON.stringify(result));assert.equal(result.data.target.binding.clientId,7);assert.deepEqual(result.data.result.values,[42]);
   const status=JSON.parse((await callTool('status',session,{clientId:7})).text).result.structuredContent;
   assert.equal(status.ok,true,JSON.stringify(status));assert.equal(status.data.clients.length,1);
+  const defaultLogs=JSON.parse((await callTool('logs',session,{})).text).result.structuredContent;
+  assert.equal(defaultLogs.error.code,'LOG_SOURCE_UNAVAILABLE');
+  const allLogs=JSON.parse((await callTool('logs',session,{side:'all'})).text).result.structuredContent;
+  assert.equal(allLogs.ok,true);assert.equal(allLogs.data.coverage.length,2);
+  assert.equal(allLogs.data.coverage[1].clientId,7);
+  const line='[  1] [fxdk_b3258_Gam] MainThrd/ [exnui] bridge line';
+  const batch={marker,fileId:'CitizenFX_current.log',startOffset:100,endOffset:100+Buffer.byteLength(line+'\n'),lines:[line]};
+  const refused=await request({path:'/mcp/client-logs',headers:{'content-type':'application/json'},body:JSON.stringify({...batch,marker:'wrong'})});
+  assert.equal(refused.status,409);
+  const accepted=await request({path:'/mcp/client-logs',headers:{'content-type':'application/json'},body:JSON.stringify(batch)});
+  assert.equal(accepted.status,200,accepted.text);
+  const duplicate=await request({path:'/mcp/client-logs',headers:{'content-type':'application/json'},body:JSON.stringify(batch)});
+  assert.equal(duplicate.status,200);
+  const clientLogs=JSON.parse((await callTool('logs',session,{side:'client',resource:'exnui'})).text).result.structuredContent;
+  assert.equal(clientLogs.ok,true,JSON.stringify(clientLogs));
+  assert.deepEqual(clientLogs.data.lines.map(entry=>entry.message),['bridge line']);
   host.onNetwork((event,id,raw)=>{const message=JSON.parse(raw);if(event.endsWith(':bind'))host.networkFrom(id,'fivem-mcp:mcp:v1:heartbeat',JSON.stringify({v:1,type:'heartbeat',binding:message.binding,payload:{lua:true,js:true}}));});
   host.networkFrom(8,'fivem-mcp:mcp:v1:hello',JSON.stringify({v:1,type:'hello',payload:{clientEpoch:'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',lua:true,js:true}}));await delay(20);
+  const multiList=JSON.parse((await rpc('tools/list',{}, {id:705,session})).text).result.tools;
+  assert.match(multiList.find(t=>t.name==='logs').description,/Specify clientId/);
   assert.equal(rpcErrorCode(await callTool('logs',session,{side:'all'})),-32602);
+  assert.equal(rpcErrorCode(await callTool('logs',session,{})),-32602);
   const selected=JSON.parse((await callTool('logs',session,{side:'all',clientId:7})).text).result.structuredContent;
   assert.equal(selected.ok,true,JSON.stringify(selected));assert.equal(selected.data.coverage.length,2);
   assert.equal(selected.data.coverage[1].clientId,7);

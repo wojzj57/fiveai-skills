@@ -2,13 +2,36 @@ import {open,readdir,lstat} from 'node:fs/promises';
 import {join} from 'node:path';
 import {StringDecoder} from 'node:string_decoder';
 import type {LogStore} from './store.ts';
-interface Source {marker:string;state:string;reason:string|null;path?:string;identity?:string;offset:number;markerOffset?:number;decoder:StringDecoder;pending:string;gap:boolean;checkedAt:number}
+import {gameLoadOffset} from '../../../scripts/client-log-history.mjs';
+interface Source {marker:string;state:string;reason:string|null;path?:string;identity?:string;offset:number;markerOffset?:number;decoder:StringDecoder;pending:string;gap:boolean;checkedAt:number;bridge?:{fileId:string;nextOffset:number;seenAt:number}}
+function appendClientLine(store:LogStore,id:number,line:string){
+  if(line.includes('FIVEM_MCP_BIND:'))return;
+  const clean=line.replace(/\r$/,'');
+  const direct=/^\[\s*(script:[^\]]+)\]\s*(.*)$/.exec(clean);
+  if(direct){store.append(direct[1]!,clean,id,direct[2]!);return;}
+  const fiveM=/^\[\s*\d+\]\s+\[[^\]]+\]\s+[^/]*\/\s+\[([A-Za-z0-9_-]+)\]\s*(.*)$/.exec(clean);
+  if(fiveM){store.append(`script:${fiveM[1]}`,clean,id,fiveM[2]!);return;}
+  store.append('client',clean,id);
+}
 export class ClientLogs {
   private sources=new Map<number,Source>();private dirs:string[];private store:LogStore;private stopped=false;private polling=false;private scanCursor=0;private fileCursor=0;private clock:()=>number;
   constructor(dirs:string[],store:LogStore,clock:()=>number=()=>performance.now()){this.dirs=dirs;this.store=store;this.clock=clock;}
   bind(id:number,marker:string){this.store.clearClient(id);this.sources.set(id,{marker,state:this.dirs.length?'unlocated':'unconfigured',reason:null,offset:0,decoder:new StringDecoder('utf8'),pending:'',gap:false,checkedAt:0});}
   unbind(id:number){this.store.clearClient(id);const s=this.sources.get(id);if(s){s.path=undefined;s.state='unavailable';s.reason='Binding lost';s.gap=true;}}
-  coverage(id:number){const s=this.sources.get(id);return {...this.store.coverage('client',id,s?.state??'unconfigured',s?.reason??null),gap:s?.gap??false};}
+  coverage(id:number){const s=this.sources.get(id);const stale=!!s?.bridge&&this.clock()-s.bridge.seenAt>10_000;const coverage=this.store.coverage('client',id,stale?'unavailable':s?.state??'unconfigured',stale?'Client log bridge stopped':s?.reason??null);return {...coverage,gap:coverage.gap||(s?.gap??false)};}
+  ingest(marker:string,fileId:string,startOffset:number,endOffset:number,lines:string[],allowedClientIds?:ReadonlySet<number>):{ok:boolean;nextOffset?:number}{
+    const entry=[...this.sources].find(([id,s])=>s.marker===marker&&(!allowedClientIds||allowedClientIds.has(id)));
+    if(!entry||!/^CitizenFX[^\\/\0]*\.log$/i.test(fileId)||!Number.isSafeInteger(startOffset)||startOffset<0||!Number.isSafeInteger(endOffset)||endOffset<startOffset||!Array.isArray(lines)||lines.length>100||lines.some(line=>typeof line!=='string'||Buffer.byteLength(line)>16_384)||Buffer.byteLength(lines.map(line=>line+'\n').join(''))!==endOffset-startOffset)return {ok:false};
+    const [id,s]=entry;
+    if(s.bridge&&s.bridge.fileId!==fileId)return {ok:false};
+    const expected=s.bridge?.nextOffset??startOffset;
+    s.bridge={fileId,nextOffset:Math.max(expected,endOffset),seenAt:this.clock()};
+    if(startOffset<expected)return {ok:true,nextOffset:expected};
+    if(startOffset>expected){s.gap=true;s.state='partial';s.reason='Client log bridge skipped bytes';}
+    else if(!s.gap){s.state='available';s.reason=null;}
+    for(const line of lines)appendClientLine(this.store,id,line);
+    return {ok:true,nextOffset:endOffset};
+  }
   async poll(){
     if(this.stopped||this.polling)return;this.polling=true;
     let scanBudget=32*1024*1024;const fileStart=this.fileCursor++;
@@ -16,7 +39,7 @@ export class ClientLogs {
       // Serial file IO stays below the maximum concurrency of two.
       const entries=[...this.sources];const ordered=entries.slice(this.scanCursor).concat(entries.slice(0,this.scanCursor));this.scanCursor=entries.length?(this.scanCursor+1)%entries.length:0;
       for(const [id,s] of ordered){
-        if(this.stopped)break;if(s.state==='unconfigured'||s.reason==='Binding lost')continue;
+        if(this.stopped)break;if(s.bridge||s.state==='unconfigured'||s.reason==='Binding lost')continue;
         try{
           if(!s.path||this.clock()-s.checkedAt>5000){
             let incomplete=false;
@@ -46,6 +69,12 @@ export class ClientLogs {
             }
             if(this.sources.get(id)!==s)continue;
             if(hits.length!==1){s.path=undefined;s.state=hits.length?'ambiguous':'unlocated';s.reason=hits.length?'Multiple files contain the current binding marker':'No current binding marker';continue;}
+            if(s.path!==hits[0]!.path||s.identity!==hits[0]!.identity){
+              const offset=await gameLoadOffset(hits[0]!.path,hits[0]!.offset);
+              if(this.sources.get(id)!==s)continue;
+              if(offset===null){s.state='unlocated';s.reason='No Game finished loading! boundary before current binding';continue;}
+              hits[0]!.offset=offset;
+            }
             if(incomplete){s.gap=true;s.state='partial';s.reason='Directory scan exceeded coverage budget';}else{s.state='available';s.reason=null;}
             s.checkedAt=this.clock();
             if(s.path!==hits[0]!.path||s.identity!==hits[0]!.identity){Object.assign(s,hits[0]);s.decoder=new StringDecoder('utf8');s.pending='';}
@@ -58,7 +87,7 @@ export class ClientLogs {
           if(this.stopped||this.sources.get(id)!==s)continue;
           s.offset+=count;s.pending+=s.decoder.write(buffer.subarray(0,count));
           const lines=s.pending.split('\n');s.pending=lines.pop()??'';
-          for(const line of lines){const clean=line.replace(/\r$/,'');const match=/^\[\s*(script:[^\]]+)\]\s*(.*)$/.exec(clean);this.store.append(match?.[1]??'client',match?.[2]??clean,id);}
+          for(const line of lines)appendClientLine(this.store,id,line);
           if(Buffer.byteLength(s.pending)>16384){this.store.append('client',s.pending,id);s.pending='';s.gap=true;s.state='partial';}
         }catch(e){s.path=undefined;s.state='unavailable';s.reason=String((e as NodeJS.ErrnoException).code??e).slice(0,1024);s.gap=true;}
       }

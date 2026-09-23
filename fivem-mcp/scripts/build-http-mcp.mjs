@@ -24,7 +24,7 @@ try{lock=await open(lockPath,'wx');}catch(e){
  await rm(lockPath);lock=await open(lockPath,'wx');
 }
 await lock.writeFile(JSON.stringify({pid:process.pid,artifact,staging}));
-const fixed=new Set(['fxmanifest.lua','README.md','LICENSE','NOTICE','dist/server.js','dist/client.js','dist/compiler-runtime.cjs','dist/compiler.cjs','lua/server.lua','lua/client.lua','lua/adapters.lua','hashes.json']);
+const fixed=new Set(['fxmanifest.lua','README.md','LICENSE','NOTICE','client-log-bridge.mjs','dist/server.js','dist/client.js','dist/compiler-runtime.cjs','dist/compiler.cjs','lua/server.lua','lua/client.lua','lua/adapters.lua','hashes.json']);
 async function files(dir,prefix=''){
  const out=[];
  for(const e of (await readdir(dir,{withFileTypes:true})).sort((a,b)=>a.name.localeCompare(b.name))){const name=prefix+e.name;
@@ -49,6 +49,7 @@ try{
  const server=await build({...common,entryPoints:[join(source,'src/server.ts')],outfile:join(staging,'dist/server.js'),platform:'node',format:'cjs',define:{__HTTP_MCP_BUILD__:JSON.stringify(identity.digest)}});
  await build({...common,entryPoints:[join(source,'src/client/main.ts')],outfile:join(staging,'dist/client.js'),platform:'browser',format:'iife',target:'es2022'});
  for(const file of ['fxmanifest.lua','README.md','LICENSE','NOTICE'])await cp(join(source,file),join(staging,file));
+ await build({...common,entryPoints:[join(root,'scripts/client-log-bridge.mjs')],outfile:join(staging,'client-log-bridge.mjs'),platform:'node',format:'esm'});
  for(const dir of ['lua','data','config'])await cp(join(source,dir),join(staging,dir),{recursive:true});
  // Include the exact licenses of bundled npm packages, without workspace dependencies.
  const packaged=new Set();
