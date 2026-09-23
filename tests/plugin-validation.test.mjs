@@ -30,13 +30,14 @@ async function makeSkill(t, frontmatter, body = "# Example\n") {
   return skillDir;
 }
 
-test("the repository exposes all nine FiveAI skills as one valid plugin", async () => {
+test("the repository exposes all ten FiveAI skills as one valid plugin", async () => {
   const result = await validateRepository(repoRoot);
 
   assert.deepEqual(result.errors, []);
   assert.deepEqual(result.skillNames, [
     "esx-framework",
     "fivem-basics",
+    "fivem-mcp",
     "fivem-nui",
     "fivem-security",
     "fivemanage",
