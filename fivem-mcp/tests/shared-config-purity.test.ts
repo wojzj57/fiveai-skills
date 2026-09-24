@@ -39,7 +39,7 @@ test("the shared config contract bundles without the SDK, broker, or CLI", async
   for (const marker of ["@modelcontextprotocol", "fastify", "/ws@", "cli/", "broker/", "tools/"]) {
     assert.equal(inputs.some((input) => input.includes(marker)), false, `forbidden bundled input: ${marker}`);
   }
-  assert.equal(inputs.some((input) => input.includes(".pnpm/zod@") || /(?:^|\/)zod\//.test(input)), true);
+  assert.equal(inputs.some((input) => /(?:^|\/)zod\//.test(input)), true);
 
   assert.ok(result.outputFiles !== undefined);
   const [output] = result.outputFiles;

@@ -5,7 +5,7 @@
  * build-relevant source tree — the root manifests, scripts/, and fivem-mcp/
  * (never node_modules, dist, or artifact outputs) — into a fresh mkdtemp
  * directory, then prepares isolated dependencies with
- * `pnpm install --offline --frozen-lockfile`. Build/pack scenarios run
+ * `npm ci --offline`. Build/pack scenarios run
  * inside the fixture; the source repository working tree is never written.
  * Pass { install: false } for hash-only fixtures (build-identity tests): the
  * tree is copied but nothing is installed, skipping the multi-minute offline
@@ -37,8 +37,8 @@ import { dirname, isAbsolute, join, relative, sep } from "node:path";
  */
 const EXCLUDED_DIRECTORY_NAMES = new Set(["node_modules", "dist", "artifact", "artificials"]);
 
-/** Root files the fixture needs for pnpm to install and the build to run. */
-const ROOT_FILES = ["package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml"];
+/** Root files the fixture needs for npm to install and the build to run. */
+const ROOT_FILES = ["package.json", "package-lock.json"];
 
 /** Source directories copied recursively (subject to the exclusions above). */
 const SOURCE_DIRECTORIES = ["scripts", "fivem-mcp"];
@@ -94,7 +94,7 @@ export function createUnifiedFixture(sourceRoot, { install = true } = {}) {
     }
 
     if (install) {
-      const installResult = spawnSync("pnpm install --offline --frozen-lockfile", {
+      const installResult = spawnSync("npm ci --offline", {
         shell: true,
         windowsHide: true,
         cwd: root,
@@ -104,8 +104,8 @@ export function createUnifiedFixture(sourceRoot, { install = true } = {}) {
       });
       if (installResult.status !== 0) {
         throw new Error(
-          `pnpm install --offline --frozen-lockfile failed in the fixture ${root}. ` +
-            "The local pnpm store must be warmed for this lockfile before these " +
+          `npm ci --offline failed in the fixture ${root}. ` +
+            "The local npm cache must be warmed for this lockfile before these " +
             "tests run; there is no fallback to the source repository's " +
             `node_modules.\nstdout:\n${installResult.stdout}\nstderr:\n${installResult.stderr}` +
             `\nerror: ${installResult.error ?? "none"}`,

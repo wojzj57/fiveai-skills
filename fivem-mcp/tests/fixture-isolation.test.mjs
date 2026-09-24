@@ -38,7 +38,7 @@ test("a fixture is a separate copy that never writes into the repository", () =>
     );
     // The inputs the build and the identity hash need are present...
     assert.equal(existsSync(join(fixture.root, "fivem-mcp", "package.json")), true);
-    assert.equal(existsSync(join(fixture.root, "pnpm-workspace.yaml")), true);
+    assert.equal(existsSync(join(fixture.root, "package-lock.json")), true);
     // ...while generated trees are not copied, so they cannot be mistaken for
     // fixture output or dragged in from the developer's machine.
     for (const generated of ["node_modules", join("fivem-mcp", "artificials")]) {

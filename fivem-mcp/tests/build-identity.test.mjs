@@ -107,7 +107,7 @@ test("writeBuildIdentity embeds exact literals, skips identical rewrites, and im
     assert.match(cli.stdout, /^build-identity: fivem-mcp\//);
     assert.equal(readFileSync(generatedPath, "utf8"), expected);
 
-    rmSync(join(fixture.root, "pnpm-workspace.yaml"));
+    rmSync(join(fixture.root, "package-lock.json"));
     const failed = spawnSync(process.execPath, [join(fixture.root, "fivem-mcp", "scripts", "build-identity.mjs")], { encoding: "utf8" });
     assert.notEqual(failed.status, 0, "a missing required input must fail the CLI");
     assert.match(failed.stderr, /build input/);

@@ -1525,7 +1525,7 @@ test("mixed A/B unified artifacts: the broker rejects the foreign build with BUI
   const spawnedStateDirs: string[] = [];
   try {
     // Build A from the pristine fixture source and keep its ZIP.
-    const packA = spawnSync("pnpm run pack", { shell: true, cwd: fixture.root, encoding: "utf8", maxBuffer: 64 * 1024 * 1024, timeout: 10 * 60 * 1000 });
+    const packA = spawnSync("npm run pack", { shell: true, cwd: join(fixture.root, "fivem-mcp"), encoding: "utf8", maxBuffer: 64 * 1024 * 1024, timeout: 10 * 60 * 1000 });
     assert.equal(packA.status, 0, `pack A failed:\n${packA.stdout}\n${packA.stderr}`);
     assert.match(packA.stdout, /Unified artifact packed/);
     copyFileSync(fixture.zipPath, join(workDir, "artifact A.zip"));
@@ -1534,7 +1534,7 @@ test("mixed A/B unified artifacts: the broker rejects the foreign build with BUI
     const serverSourcePath = join(fixture.root, "fivem-mcp/src/server/main.js");
     const serverSource = readFileSync(serverSourcePath, "utf8");
     writeFileSync(serverSourcePath, serverSource + "\n// ab mixed-artifact regression marker\n");
-    const packB = spawnSync("pnpm run pack", { shell: true, cwd: fixture.root, encoding: "utf8", maxBuffer: 64 * 1024 * 1024, timeout: 10 * 60 * 1000 });
+    const packB = spawnSync("npm run pack", { shell: true, cwd: join(fixture.root, "fivem-mcp"), encoding: "utf8", maxBuffer: 64 * 1024 * 1024, timeout: 10 * 60 * 1000 });
     assert.equal(packB.status, 0, `pack B failed:\n${packB.stdout}\n${packB.stderr}`);
     copyFileSync(fixture.zipPath, join(workDir, "artifact B.zip"));
 

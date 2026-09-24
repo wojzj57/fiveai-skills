@@ -4,7 +4,10 @@
   "private": true,
   "description": "Validation tooling for the FiveAI multi-host skills plugin.",
   "type": "module",
-  "packageManager": "pnpm@11.9.0",
+  "packageManager": "npm@11.12.1",
+  "workspaces": [
+    "fivem-mcp"
+  ],
   "files": [
     "skills",
     "cordis.patch.yml"
@@ -13,19 +16,5 @@
     "bundle": {
       "patch": "./cordis.patch.yml"
     }
-  },
-  "scripts": {
-    "build": "pnpm --filter fivem-mcp run build",
-    "pack": "pnpm --filter fivem-mcp run pack",
-    "build:resource": "pnpm --filter fivem-mcp run pack",
-    "build:http": "pnpm --filter fivem-mcp run build:http",
-    "typecheck:http": "pnpm --filter fivem-mcp run typecheck:http",
-    "test": "node --test --test-concurrency=1 \"tests/**/*.test.mjs\" \"fivem-mcp/tests/**/*.test.mjs\"",
-    "test:mcp": "pnpm --filter fivem-mcp run test:fixture",
-    "test:all": "pnpm run test && pnpm run test:mcp",
-    "validate": "node scripts/validate-plugin.mjs"
-  },
-  "devDependencies": {
-    "fflate": "0.8.2"
   }
 }

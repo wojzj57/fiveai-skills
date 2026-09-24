@@ -1,4 +1,0 @@
-packages:
-  - "fivem-mcp"
-allowBuilds:
-  esbuild: true

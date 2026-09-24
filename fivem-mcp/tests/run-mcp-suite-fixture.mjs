@@ -4,6 +4,7 @@
  * repository's dist/fivem-mcp installation.
  */
 import { spawnSync } from "node:child_process";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { createUnifiedFixture } from "./helpers/unified-fixture.mjs";
@@ -14,10 +15,10 @@ delete childEnv.NODE_TEST_CONTEXT;
 
 const fixture = createUnifiedFixture(sourceRoot);
 try {
-  const result = spawnSync("pnpm run build:resource && pnpm --filter fivem-mcp run test", {
+  const result = spawnSync("npm run build:resource && npm test", {
     shell: true,
     windowsHide: true,
-    cwd: fixture.root,
+    cwd: join(fixture.root, "fivem-mcp"),
     encoding: "utf8",
     env: childEnv,
     maxBuffer: 64 * 1024 * 1024,

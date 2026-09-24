@@ -8,20 +8,24 @@
     "node": ">=22.12.0"
   },
   "scripts": {
-    "build": "pnpm run typecheck:http && pnpm run build:http",
+    "build": "npm run typecheck:http && npm run build:http",
+    "build:resource": "npm run pack",
     "build:http": "node scripts/build-http-mcp.mjs",
     "logs:bridge": "node scripts/client-log-bridge.mjs",
     "build:identity": "node scripts/build-identity.mjs",
-    "build:contracts": "pnpm run build:identity && esbuild src/index.ts --bundle --format=esm --platform=node --outfile=dist/index.mjs",
-    "build:entry": "pnpm run build:identity && esbuild src/cli/entry.ts --bundle --format=esm --platform=node --outfile=dist/entry.mjs --banner:js=\"import { createRequire as __cr } from 'module'; const require = __cr(import.meta.url);\" && node -e \"require('node:fs').copyFileSync('src/cli/windows-files.ps1', 'dist/windows-files.ps1')\"",
-    "build:broker": "pnpm run build:identity && esbuild src/broker/main.ts --bundle --format=esm --platform=node --outfile=dist/broker.mjs --banner:js=\"import { createRequire as __cr } from 'module'; const require = __cr(import.meta.url);\"",
+    "build:contracts": "npm run build:identity && esbuild src/index.ts --bundle --format=esm --platform=node --outfile=dist/index.mjs",
+    "build:entry": "npm run build:identity && esbuild src/cli/entry.ts --bundle --format=esm --platform=node --outfile=dist/entry.mjs --banner:js=\"import { createRequire as __cr } from 'module'; const require = __cr(import.meta.url);\" && node -e \"require('node:fs').copyFileSync('src/cli/windows-files.ps1', 'dist/windows-files.ps1')\"",
+    "build:broker": "npm run build:identity && esbuild src/broker/main.ts --bundle --format=esm --platform=node --outfile=dist/broker.mjs --banner:js=\"import { createRequire as __cr } from 'module'; const require = __cr(import.meta.url);\"",
     "build:bundle": "node scripts/build-resource.mjs",
-    "build:legacy": "pnpm run build:contracts && pnpm run build:entry && pnpm run build:broker && pnpm run build:bundle",
-    "typecheck": "pnpm run build:identity && tsc --noEmit",
+    "build:legacy": "npm run build:contracts && npm run build:entry && npm run build:broker && npm run build:bundle",
+    "typecheck": "npm run build:identity && tsc --noEmit",
     "typecheck:http": "tsc -p http-mcp/tsconfig.json",
-    "pack": "pnpm run typecheck:http && node scripts/build-http-mcp.mjs --pack",
-    "test": "pnpm run typecheck:http && node --test tests/fixture-isolation.test.mjs tests/build-identity.test.mjs tests/http-*.test.mjs",
-    "test:fixture": "node tests/run-mcp-suite-fixture.mjs"
+    "pack": "npm run typecheck:http && node scripts/build-http-mcp.mjs --pack",
+    "test": "npm run typecheck:http && node --test tests/fixture-isolation.test.mjs tests/build-identity.test.mjs tests/http-*.test.mjs",
+    "test:fixture": "node tests/run-mcp-suite-fixture.mjs",
+    "test:plugin": "node --test --test-concurrency=1 \"../tests/**/*.test.mjs\"",
+    "test:all": "npm run test:plugin && npm run test && npm run test:fixture",
+    "validate:plugin": "node ../scripts/validate-plugin.mjs .."
   },
   "dependencies": {
     "@fastify/websocket": "11.3.0",
@@ -37,6 +41,7 @@
     "@types/node": "22.18.1",
     "@types/ws": "8.18.1",
     "esbuild": "0.28.2",
+    "fflate": "0.8.2",
     "typescript": "5.9.3"
   }
 }

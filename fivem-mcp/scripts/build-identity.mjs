@@ -5,7 +5,7 @@
  * build inputs so the same source tree always produces the same identity,
  * regardless of the checkout directory, Git presence, or runtime files:
  *
- *   - root package.json, pnpm-lock.yaml, pnpm-workspace.yaml
+ *   - root package.json and package-lock.json
  *   - fivem-mcp/package.json, fivem-mcp/tsconfig.json, fivem-mcp/fxmanifest.lua
  *   - fivem-mcp/scripts/** (the package build scripts)
  *   - fivem-mcp/src/** (except src/generated/)
@@ -39,8 +39,7 @@ const NEVER_SCAN = new Set(["node_modules", "dist", "artifact"]);
 /** Required single files, hashed by their repository-relative path. */
 const SINGLE_FILES = [
   "package.json",
-  "pnpm-lock.yaml",
-  "pnpm-workspace.yaml",
+  "package-lock.json",
   "fivem-mcp/fxmanifest.lua",
   "fivem-mcp/package.json",
   "fivem-mcp/tsconfig.json",
