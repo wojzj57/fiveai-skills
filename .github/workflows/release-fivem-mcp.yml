@@ -1,0 +1,64 @@
+name: Release FiveM MCP
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out merged commit
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        run: |
+          npm install --global npm@11.12.1
+          npm ci
+
+      - name: Pack FiveM MCP
+        run: npm run pack --workspace fivem-mcp
+
+      - name: Name release archive
+        id: package
+        shell: bash
+        run: |
+          version="$(node -p "require('./fivem-mcp/package.json').version")"
+          source_zip='fivem-mcp/artificials/fivem-mcp.zip'
+          test -s "$source_zip"
+          asset="fivem-mcp-${version}.zip"
+          mv "$source_zip" "$asset"
+          printf 'version=%s\nasset=%s\n' "$version" "$asset" >> "$GITHUB_OUTPUT"
+
+      - name: Publish GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.package.outputs.version }}
+          ASSET: ${{ steps.package.outputs.asset }}
+        run: |
+          tag="fivem-mcp-v${VERSION}-${GITHUB_SHA}"
+          if gh release view "$tag" --json assets,isDraft > release.json 2>/dev/null; then
+            if ! jq -e --arg name "$ASSET" '.assets | any(.name == $name)' release.json > /dev/null; then
+              gh release upload "$tag" "$ASSET"
+            fi
+            if jq -e '.isDraft' release.json > /dev/null; then
+              gh release edit "$tag" --draft=false
+            fi
+          else
+            gh release create "$tag" "$ASSET" \
+              --target "$GITHUB_SHA" \
+              --title "fivem-mcp v${VERSION} (${GITHUB_SHA:0:7})" \
+              --notes "Built from main commit ${GITHUB_SHA}."
+          fi
