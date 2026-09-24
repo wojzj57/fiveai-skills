@@ -4,6 +4,10 @@
   "private": true,
   "description": "Validation tooling for the FiveAI multi-host skills plugin.",
   "type": "module",
+  "packageManager": "npm@11.12.1",
+  "workspaces": [
+    "fivem-mcp"
+  ],
   "files": [
     "skills",
     "cordis.patch.yml"
@@ -12,9 +16,5 @@
     "bundle": {
       "patch": "./cordis.patch.yml"
     }
-  },
-  "scripts": {
-    "test": "node --test",
-    "validate": "node scripts/validate-plugin.mjs"
   }
 }

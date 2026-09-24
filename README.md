@@ -23,6 +23,7 @@ A **skill** is a bundle of documentation and rules that an AI uses when helping 
 - **oxlib** — Ox Lib: UI (notify, alert, input, menu, progress), callbacks, commands, zones.
 - **oxmysql** — OxMySQL: queries, inserts, updates, transactions, placeholders.
 - **fivemanage** — Fivemanage SDK: logs, images (takeImage, takeServerImage, uploadImage), configuration.
+- **fivem-mcp** — Install and connect the local FiveAI FiveM MCP resource; use its runtime tools, logs, and framework adapters.
 
 When you add a skill to your agent, it knows when to use it (“Use when…”) and can follow the rules and references so its answers stay correct and on-topic. That’s especially important for FiveM, where patterns, APIs, and best practices are specific to the platform.
 
@@ -57,7 +58,7 @@ New-Item -ItemType Directory -Force "$env:USERPROFILE\.cursor\plugins\local" | O
 git clone https://github.com/wojzj57/fiveai-skills "$env:USERPROFILE\.cursor\plugins\local\fiveai-skills"
 ```
 
-Run **Developer: Reload Window**, then open **Customize** and confirm that the nine skills are listed. Teams and Enterprise organizations can import `wojzj57/fiveai-skills` from **Dashboard > Plugins > Team Marketplaces**. Update a local clone with `git pull --ff-only`; uninstall it by removing that local plugin directory.
+Run **Developer: Reload Window**, then open **Customize** and confirm that the ten skills are listed. Teams and Enterprise organizations can import `wojzj57/fiveai-skills` from **Dashboard > Plugins > Team Marketplaces**. Update a local clone with `git pull --ff-only`; uninstall it by removing that local plugin directory.
 
 ### Hermes Agent
 
@@ -132,10 +133,15 @@ You can also download individual skills from [usefiveai.vercel.app/skills](https
 The validator uses Node.js built-ins only and does not install dependencies:
 
 ```powershell
-npm test
-npm run validate
+npm ci
+cd fivem-mcp
+npm run test:all
+npm run validate:plugin
 ```
 
+### FiveM MCP resource
+
+The [fivem-mcp skill](skills/fivem-mcp/SKILL.md) guides an agent through installing a built FXServer/FxDK resource, connecting over local Streamable HTTP, and using its tools. For building and packaging the resource from this workspace, follow the [FiveM MCP README](fivem-mcp/README.md). The skill files and the running resource serve different roles: installing this plugin alone does not start an MCP server.
 
 ---
 
@@ -185,6 +191,9 @@ The repository root is the plugin package. Skills remain under `skills/` as the 
     ├── oxlib/
     │   ├── SKILL.md
     │   └── rules/
+    ├── fivem-mcp/
+    │   ├── SKILL.md
+    │   └── references/
     └── ...
 ```
 

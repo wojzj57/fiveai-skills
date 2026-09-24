@@ -1,0 +1,47 @@
+{
+  "name": "fivem-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "FiveAI FiveM debug MCP - the single workspace package: server resource, client binding and MCP contracts.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "build": "npm run typecheck:http && npm run build:http",
+    "build:resource": "npm run pack",
+    "build:http": "node scripts/build-http-mcp.mjs",
+    "logs:bridge": "node scripts/client-log-bridge.mjs",
+    "build:identity": "node scripts/build-identity.mjs",
+    "build:contracts": "npm run build:identity && esbuild src/index.ts --bundle --format=esm --platform=node --outfile=dist/index.mjs",
+    "build:entry": "npm run build:identity && esbuild src/cli/entry.ts --bundle --format=esm --platform=node --outfile=dist/entry.mjs --banner:js=\"import { createRequire as __cr } from 'module'; const require = __cr(import.meta.url);\" && node -e \"require('node:fs').copyFileSync('src/cli/windows-files.ps1', 'dist/windows-files.ps1')\"",
+    "build:broker": "npm run build:identity && esbuild src/broker/main.ts --bundle --format=esm --platform=node --outfile=dist/broker.mjs --banner:js=\"import { createRequire as __cr } from 'module'; const require = __cr(import.meta.url);\"",
+    "build:bundle": "node scripts/build-resource.mjs",
+    "build:legacy": "npm run build:contracts && npm run build:entry && npm run build:broker && npm run build:bundle",
+    "typecheck": "npm run build:identity && tsc --noEmit",
+    "typecheck:http": "tsc -p http-mcp/tsconfig.json",
+    "pack": "npm run typecheck:http && node scripts/build-http-mcp.mjs --pack",
+    "test": "npm run typecheck:http && node --test tests/fixture-isolation.test.mjs tests/build-identity.test.mjs tests/http-*.test.mjs",
+    "test:fixture": "node tests/run-mcp-suite-fixture.mjs",
+    "test:plugin": "node --test --test-concurrency=1 \"../tests/**/*.test.mjs\"",
+    "test:all": "npm run test:plugin && npm run test && npm run test:fixture",
+    "validate:plugin": "node ../scripts/validate-plugin.mjs .."
+  },
+  "dependencies": {
+    "@fastify/websocket": "11.3.0",
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "acorn": "8.15.0",
+    "ajv": "8.20.0",
+    "ajv-formats": "3.0.1",
+    "fastify": "5.12.3",
+    "ws": "8.21.3",
+    "zod": "4.5.4"
+  },
+  "devDependencies": {
+    "@types/node": "22.18.1",
+    "@types/ws": "8.18.1",
+    "esbuild": "0.28.2",
+    "fflate": "0.8.2",
+    "typescript": "5.9.3"
+  }
+}

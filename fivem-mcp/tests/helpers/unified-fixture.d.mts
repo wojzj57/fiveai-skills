@@ -1,0 +1,15 @@
+/**
+ * Type declarations for fivem-mcp/tests/helpers/unified-fixture.mjs
+ * (consumed by the package TypeScript tests; the implementation stays plain
+ * .mjs).
+ */
+
+export declare function createUnifiedFixture(
+  sourceRoot: string,
+  options?: { install?: boolean },
+): {
+  root: string;
+  installDir: string;
+  zipPath: string;
+  dispose(): void;
+};

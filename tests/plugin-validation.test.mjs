@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { globSync, readFileSync } from "node:fs";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -29,13 +30,14 @@ async function makeSkill(t, frontmatter, body = "# Example\n") {
   return skillDir;
 }
 
-test("the repository exposes all nine FiveAI skills as one valid plugin", async () => {
+test("the repository exposes all ten FiveAI skills as one valid plugin", async () => {
   const result = await validateRepository(repoRoot);
 
   assert.deepEqual(result.errors, []);
   assert.deepEqual(result.skillNames, [
     "esx-framework",
     "fivem-basics",
+    "fivem-mcp",
     "fivem-nui",
     "fivem-security",
     "fivemanage",
@@ -192,4 +194,15 @@ test("DeepSeek Harness bundle mounts the canonical skills directory", () => {
       patch,
     ).some((error) => error.includes("dsh.bundle.patch")),
   );
+});
+
+// An unmatched node --test glob exits successfully with zero tests.
+test("package test commands include existing plugin and MCP test files", () => {
+  const packageRoot = path.join(repoRoot, "fivem-mcp");
+  const manifest = JSON.parse(readFileSync(path.join(packageRoot, "package.json"), "utf8"));
+  assert.match(manifest.scripts["test:all"], /npm run test:plugin && npm run test && npm run test:fixture/);
+  assert.ok(manifest.scripts["test:plugin"].includes("../tests/**/*.test.mjs"));
+  assert.ok(globSync("../tests/**/*.test.mjs", { cwd: packageRoot }).length > 0);
+  assert.ok(manifest.scripts.test.includes("tests/http-*.test.mjs"));
+  assert.ok(globSync("tests/http-*.test.mjs", { cwd: packageRoot }).length > 0);
 });

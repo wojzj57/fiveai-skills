@@ -1,0 +1,21 @@
+{
+  "//": [
+    "Dev/test floor: Node >= 22.18.0 (unflagged .ts type stripping for `node --test`).",
+    "The package.json engines floor (22.12.0, RFC §3.1) covers running the built artifact."
+  ],
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "types": ["node"]
+  },
+  "include": ["src/**/*.ts", "tests/**/*.ts"]
+}

@@ -8,3 +8,14 @@ Thumbs.db
 .idea
 .vscode
 __pycache__/
+
+# Node
+node_modules/
+fivem-mcp/dist/
+fivem-mcp/src/generated/
+fivem-mcp/artifact/
+fivem-mcp/artificials/
+fivem-mcp/http-mcp/dist/
+
+# Unified artifact build output (contains runtime credentials/state)
+/dist/
