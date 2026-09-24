@@ -12,8 +12,10 @@ remain **NOT_EXECUTED**. Node shims and Lua 5.4 tests are not FiveM acceptance.
 From the repository root with dependencies installed:
 
 ```powershell
-corepack pnpm --dir fivem-mcp build
-corepack pnpm --dir fivem-mcp pack
+npm ci
+cd fivem-mcp
+npm run build
+npm run pack
 ```
 
 Build publishes `fivem-mcp/artificials/fivem-mcp/`. Pack also writes
@@ -174,7 +176,8 @@ the FXServer host permits it.
 ## Verification
 
 ```powershell
-corepack pnpm --dir fivem-mcp test
+cd fivem-mcp
+npm test
 py -3.11 fivem-mcp/tests/fixtures/http-lua-check.py
 ```
 

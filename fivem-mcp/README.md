@@ -7,8 +7,10 @@ FiveAI FiveM MCP runs as one FXServer/FxDK resource and serves Streamable HTTP M
 From the repository root, with workspace dependencies installed, build the resource or create a distributable ZIP:
 
 ```powershell
-corepack pnpm --dir fivem-mcp build
-corepack pnpm --dir fivem-mcp pack
+npm ci
+cd fivem-mcp
+npm run build
+npm run pack
 ```
 
 Both commands publish the complete resource at `fivem-mcp/artificials/fivem-mcp/`. `pack` also creates `fivem-mcp/artificials/fivem-mcp.zip`. Install the directory that contains `fxmanifest.lua`, `dist/`, `lua/`, `data/`, and `config/`. Stop an existing installation before replacing it, and preserve its local `config/config.json`. The ZIP contains example configuration, not an operator's local configuration.
@@ -40,7 +42,7 @@ Use the actual local log directory. If the resource uses a custom port, pass `--
 ## Verify
 
 ```powershell
-corepack pnpm --dir fivem-mcp test
+npm test
 ```
 
 The repository tests use fixtures and shims. They do not establish real FxDK/FXServer, game-client, framework, database, or AI-client acceptance. See the [HTTP MCP implementation guide](http-mcp/README.md) for runtime boundaries and host verification requirements.

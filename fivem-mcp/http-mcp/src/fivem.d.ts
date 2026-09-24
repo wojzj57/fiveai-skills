@@ -3,7 +3,7 @@
  * HTTP MCP experiment calls.
  *
  * Only the globals this resource actually uses are declared. Everything else
- * is deliberately left undeclared so a typo fails `pnpm typecheck:http` instead
+ * is deliberately left undeclared so a typo fails `npm run typecheck:http` instead
  * of silently binding to an untyped global. `console` is intentionally absent:
  * `@types/node` already declares it, and redeclaring it would collide.
  *
