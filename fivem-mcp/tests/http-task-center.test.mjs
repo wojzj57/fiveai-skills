@@ -3,10 +3,9 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { after, before } from "node:test";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { build } from "esbuild";
 
-const packageRoot = new URL("../", import.meta.url);
 let buildRoot;
 let TaskCenter;
 
@@ -14,7 +13,7 @@ before(async () => {
   buildRoot = await mkdtemp(join(tmpdir(), "fiveai-task-center-"));
   const outfile = join(buildRoot, "task-center.mjs");
   await build({
-    entryPoints: [new URL("../http-mcp/src/tasks/index.ts", import.meta.url).pathname.slice(1)],
+    entryPoints: [fileURLToPath(new URL("../http-mcp/src/tasks/index.ts", import.meta.url))],
     outfile,
     bundle: true,
     format: "esm",

@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { after, before } from "node:test";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { build } from "esbuild";
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
@@ -20,7 +20,7 @@ before(async () => {
   buildRoot = await mkdtemp(join(tmpdir(), "fiveai-client-runtime-"));
   const outfile = join(buildRoot, "client.mjs");
   await build({
-    entryPoints: [new URL("../http-mcp/src/client/index.ts", import.meta.url).pathname.slice(1)],
+    entryPoints: [fileURLToPath(new URL("../http-mcp/src/client/index.ts", import.meta.url))],
     outfile,
     bundle: true,
     format: "esm",
@@ -29,7 +29,7 @@ before(async () => {
     sourcemap: "inline",
   });
   await build({
-    entryPoints: [new URL("../http-mcp/src/client/main.ts", import.meta.url).pathname.slice(1)],
+    entryPoints: [fileURLToPath(new URL("../http-mcp/src/client/main.ts", import.meta.url))],
     outfile: join(buildRoot, "client-entry.js"),
     bundle: true,
     format: "iife",
