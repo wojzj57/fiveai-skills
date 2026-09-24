@@ -3,7 +3,7 @@ name: Release FiveM MCP
 on:
   push:
     branches:
-      - main
+      - master
 
 permissions:
   contents: write
@@ -60,5 +60,5 @@ jobs:
             gh release create "$tag" "$ASSET" \
               --target "$GITHUB_SHA" \
               --title "fivem-mcp v${VERSION} (${GITHUB_SHA:0:7})" \
-              --notes "Built from main commit ${GITHUB_SHA}."
+              --notes "Built from master commit ${GITHUB_SHA}."
           fi
